@@ -1,0 +1,67 @@
+# CI: compilation sur les trois plateformes, plus la provenance des DLL Windows.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache de l'installeur Lazarus
+        uses: actions/cache@v4
+        with:
+          path: ~/laz-dl
+          key: laz-win64-4.8-fpc-3.2.2
+      - name: Installer Lazarus 4.8
+        run: ./.github/install-lazarus-windows.ps1
+      - name: Verifier les empreintes des DLL versionnees
+        run: ./scripts/check-win-deps.ps1
+      - name: Compiler (release)
+        run: ./scripts/build.ps1 -Release
+
+  build-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache des paquets FPC et des sources Lazarus
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/laz-dl
+            ~/lazarus-trunk
+          key: laz-linux-amd64-trunk-${{ hashFiles('.github/install-lazarus-linux.sh') }}
+      - name: Installer FPC 3.2.2 et Lazarus trunk
+        run: bash .github/install-lazarus-linux.sh
+      - name: En-tetes GTK3
+        run: sudo apt-get install -y --no-install-recommends libgtk-3-dev
+      - name: Compiler (release, GTK3)
+        run: bash scripts/build.sh --release
+
+  build-macos:
+    # arm64. macos-14 = Xcode 15.4; son ld moderne casse sur les sections objc
+    # de FPC, le .lpi force -ld_classic.
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache des installeurs FPC et Lazarus
+        uses: actions/cache@v4
+        with:
+          path: ~/laz-dl
+          key: laz-macos-aarch64-4.8-fpc-3.2.4rc1a
+      - name: Installer Lazarus 4.8 aarch64
+        run: bash .github/install-lazarus-macos.sh
+      - name: Compiler (release, Cocoa)
+        run: bash scripts/build.sh --release

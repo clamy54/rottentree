@@ -1,0 +1,167 @@
+# Release: push d'un tag v* -> build 3 OS -> release GitHub en brouillon.
+# Les scripts du depot font le travail, ici on orchestre seulement.
+# Repetition a blanc: Actions > release > Run workflow (artefacts, pas de release).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# un seul run par ref, jamais annule en vol: une release a moitie publiee est
+# pire que pas de release du tout
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # tag coherent avec RT_VERSION avant de bruler quarante minutes de runners
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extraire RT_VERSION et controler le tag
+        id: ver
+        run: |
+          ver="$(sed -n "s/.*RT_VERSION *= *'\([^']*\)'.*/\1/p" src/util/uVersion.pas | head -1)"
+          [ -n "$ver" ] || { echo "RT_VERSION introuvable dans src/util/uVersion.pas" >&2; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$ver" ]; then
+            echo "tag $GITHUB_REF_NAME != v$ver (RT_VERSION): version pas montee ou tag mal nomme" >&2
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    needs: guard
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache de l'installeur Lazarus
+        uses: actions/cache@v4
+        with:
+          path: ~/laz-dl
+          key: laz-win64-4.8-fpc-3.2.2
+      - name: Installer Lazarus 4.8
+        run: ./.github/install-lazarus-windows.ps1
+      - name: Verifier Inno Setup 6
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+      - name: Verifier les empreintes des DLL versionnees
+        run: ./scripts/check-win-deps.ps1
+      - name: Compiler (release)
+        run: ./scripts/build.ps1 -Release
+      - name: Compiler l'installeur
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" dist\windows\rottentree.iss
+      - name: Zipper l'installeur
+        run: |
+          $setup = Get-ChildItem dist\windows\output\Rottentree-Setup-*.exe | Select-Object -First 1
+          Compress-Archive -Path $setup.FullName -DestinationPath ($setup.FullName -replace '\.exe$', '.zip') -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup
+          path: dist/windows/output/Rottentree-Setup-*.zip
+          if-no-files-found: error
+
+  build-linux:
+    needs: guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache des paquets FPC et des sources Lazarus
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/laz-dl
+            ~/lazarus-trunk
+          key: laz-linux-amd64-trunk-${{ hashFiles('.github/install-lazarus-linux.sh') }}
+      - name: Installer FPC 3.2.2 et Lazarus trunk
+        run: bash .github/install-lazarus-linux.sh
+      - name: En-tetes GTK3 et outils d'empaquetage
+        # libgtk-3-dev pour l'edition de liens, et pour que dpkg-shlibdeps
+        # retrouve le paquet qui fournit libgtk-3.so.0
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev dpkg-dev imagemagick
+      - name: Compiler (release, GTK3)
+        run: bash scripts/build.sh --release
+      - name: Empaqueter le .deb
+        run: bash dist/linux/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: dist/linux/build/rottentree_*_amd64.deb
+          if-no-files-found: error
+
+  build-macos:
+    needs: guard
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache des installeurs FPC et Lazarus
+        uses: actions/cache@v4
+        with:
+          path: ~/laz-dl
+          key: laz-macos-aarch64-4.8-fpc-3.2.4rc1a
+      - name: Installer Lazarus 4.8 aarch64
+        run: bash .github/install-lazarus-macos.sh
+      - name: Bibliotheques natives
+        # package-macos.sh les embarque dans Contents/Frameworks et echoue si
+        # une seule garde une reference vers /opt/homebrew
+        run: brew install openldap openssl@3 libsodium sqlite argon2
+      - name: Construire Rottentree.app (release, signature ad hoc)
+        env:
+          LAZBUILD: /usr/local/bin/lazbuild
+        run: bash scripts/package-macos.sh
+      - name: Empaqueter le .dmg
+        # sans autorisation d'automatisation le Finder ne repond pas: le script
+        # abandonne la mise en page au bout de 30 s et livre un .dmg sans style
+        run: bash dist/macos/make-dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/macos/build/Rottentree-*.dmg
+          if-no-files-found: error
+
+  release:
+    # publication seulement sur push de tag; un dispatch reste une repetition
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [guard, build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VER: ${{ needs.guard.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Creer la release (brouillon) avec les 3 fichiers
+        run: |
+          ls -l assets
+          notes="$(printf '%s\n\n%s\n\n%s' \
+            "macOS: the app is ad-hoc signed, not notarized. Gatekeeper blocks the first launch: open the app once, then go to System Settings > Privacy & Security and click Open Anyway." \
+            "Windows: the installer is not Authenticode signed, so SmartScreen will call the publisher unknown. Click More info, then Run anyway." \
+            "Changes: https://github.com/${GH_REPO}/commits/${TAG}")"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # relance apres echec: la release existe deja, on remplace ses fichiers
+            gh release upload "$TAG" assets/* --clobber
+          else
+            gh release create "$TAG" assets/* --draft --title "Rottentree $VER" --notes "$notes"
+          fi

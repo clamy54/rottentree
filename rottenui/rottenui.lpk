@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <Package Version="5">
+    <Name Value="RottenUI"/>
+    <Type Value="RunTime"/>
+    <Author Value="Cyril LAMY"/>
+    <CompilerOptions>
+      <Version Value="11"/>
+      <SearchPaths>
+        <OtherUnitFiles Value="src"/>
+        <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)-$(LCLWidgetType)"/>
+      </SearchPaths>
+      <Parsing>
+        <SyntaxOptions>
+          <SyntaxMode Value="ObjFPC"/>
+        </SyntaxOptions>
+      </Parsing>
+      <CodeGeneration>
+        <SmartLinkUnit Value="True"/>
+        <Checks>
+          <IOChecks Value="True"/>
+          <RangeChecks Value="True"/>
+          <OverflowChecks Value="True"/>
+        </Checks>
+      </CodeGeneration>
+    </CompilerOptions>
+    <Description Value="RottenUI: themed LCL controls (message boxes, combo boxes, check boxes, buttons, lists, tab bar, menu bar, search box, scroll bar, dialogs) with embedded Monaspace and JetBrains Mono fonts, Tabler icons and themes."/>
+    <License Value="GPL-3.0-or-later; embedded fonts under SIL OFL 1.1 and Tabler icons under MIT (assets/licenses)."/>
+    <Version Major="1"/>
+    <Files Count="20">
+      <Item1>
+        <Filename Value="src/uFontEmbed.pas"/>
+        <UnitName Value="uFontEmbed"/>
+      </Item1>
+      <Item2>
+        <Filename Value="src/uIcons.pas"/>
+        <UnitName Value="uIcons"/>
+      </Item2>
+      <Item3>
+        <Filename Value="src/uJsonGuard.pas"/>
+        <UnitName Value="uJsonGuard"/>
+      </Item3>
+      <Item4>
+        <Filename Value="src/uMenuBar.pas"/>
+        <UnitName Value="uMenuBar"/>
+      </Item4>
+      <Item5>
+        <Filename Value="src/uPickDialog.pas"/>
+        <UnitName Value="uPickDialog"/>
+      </Item5>
+      <Item6>
+        <Filename Value="src/uRtButton.pas"/>
+        <UnitName Value="uRtButton"/>
+      </Item6>
+      <Item7>
+        <Filename Value="src/uRtCheck.pas"/>
+        <UnitName Value="uRtCheck"/>
+      </Item7>
+      <Item8>
+        <Filename Value="src/uRtCombo.pas"/>
+        <UnitName Value="uRtCombo"/>
+      </Item8>
+      <Item9>
+        <Filename Value="src/uRtList.pas"/>
+        <UnitName Value="uRtList"/>
+      </Item9>
+      <Item10>
+        <Filename Value="src/uRtMessage.pas"/>
+        <UnitName Value="uRtMessage"/>
+      </Item10>
+      <Item11>
+        <Filename Value="src/uSafeSave.pas"/>
+        <UnitName Value="uSafeSave"/>
+      </Item11>
+      <Item12>
+        <Filename Value="src/uSearchBox.pas"/>
+        <UnitName Value="uSearchBox"/>
+      </Item12>
+      <Item13>
+        <Filename Value="src/uTabBar.pas"/>
+        <UnitName Value="uTabBar"/>
+      </Item13>
+      <Item14>
+        <Filename Value="src/uTheme.pas"/>
+        <UnitName Value="uTheme"/>
+      </Item14>
+      <Item15>
+        <Filename Value="src/uThemeData.pas"/>
+        <UnitName Value="uThemeData"/>
+      </Item15>
+      <Item16>
+        <Filename Value="src/uThemeLoad.pas"/>
+        <UnitName Value="uThemeLoad"/>
+      </Item16>
+      <Item17>
+        <Filename Value="src/uThemePreview.pas"/>
+        <UnitName Value="uThemePreview"/>
+      </Item17>
+      <Item18>
+        <Filename Value="src/uTreeScrollBar.pas"/>
+        <UnitName Value="uTreeScrollBar"/>
+      </Item18>
+      <Item19>
+        <Filename Value="src/uUiKit.pas"/>
+        <UnitName Value="uUiKit"/>
+      </Item19>
+      <Item20>
+        <Filename Value="src/uIconCatalog.inc"/>
+        <Type Value="Include"/>
+      </Item20>
+    </Files>
+    <RequiredPkgs Count="1">
+      <Item1>
+        <PackageName Value="LCL"/>
+      </Item1>
+    </RequiredPkgs>
+    <UsageOptions>
+      <UnitPath Value="$(PkgOutDir)"/>
+    </UsageOptions>
+    <PublishOptions>
+      <Version Value="2"/>
+    </PublishOptions>
+  </Package>
+</CONFIG>

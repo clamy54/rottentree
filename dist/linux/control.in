@@ -1,0 +1,19 @@
+Package: rottentree
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Cyril LAMY <cyril.lamy@gmail.com>
+Depends: @DEPENDS@
+Description: Rottentree - LDAP and Active Directory administration client
+ A native LDAP client written in Free Pascal / Lazarus: lazy directory tree,
+ attribute editor with a preview of every write, search and filter builder,
+ schema browser, LDIF import and export (or an LDIF file opened as if it were
+ a server), userPassword tools, Active Directory account tools, server
+ monitor, and a comparison of 2 to 16 replicas.
+ .
+ Connection profiles and their secrets live in a single encrypted .rtt
+ document (Argon2id + XChaCha20-Poly1305).
+ .
+ Free software under GPL v3 or later; see
+ /usr/share/doc/rottentree/licenses/THIRD-PARTY-NOTICES.md

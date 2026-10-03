@@ -1,0 +1,760 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Genere par scripts/gen_lpi.py; ne pas editer a la main. -->
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="12"/>
+    <General>
+      <Flags>
+        <MainUnitHasCreateFormStatements Value="False"/>
+        <CompatibilityMode Value="True"/>
+      </Flags>
+      <SessionStorage Value="None"/>
+      <Title Value="Rottentree"/>
+      <Scaled Value="True"/>
+      <UseAppBundle Value="False"/>
+      <ResourceType Value="res"/>
+      <UseXPManifest Value="True"/>
+      <XPManifest>
+        <DpiAware Value="True/PM"/>
+        <LongPathAware Value="True"/>
+        <TextName Value="Rottentree"/>
+        <TextDesc Value="LDAP administration client"/>
+      </XPManifest>
+      <Icon Value="0"/>
+      <Resources Count="10">
+        <Resource_0 FileName="../resources/icons/rottentree-256.png" Type="RCDATA" ResourceName="APPICON_PNG"/>
+        <Resource_1 FileName="../licenses/Argon2-CC0-or-Apache-2.0.txt" Type="RCDATA" ResourceName="LICENSE_ARGON2_CC0_OR_APACHE_2_0"/>
+        <Resource_2 FileName="../licenses/Cyrus-SASL-BSD-Attribution.txt" Type="RCDATA" ResourceName="LICENSE_CYRUS_SASL_BSD_ATTRIBUTION"/>
+        <Resource_3 FileName="../licenses/FPC-LCL-modified-LGPL.txt" Type="RCDATA" ResourceName="LICENSE_FPC_LCL_MODIFIED_LGPL"/>
+        <Resource_4 FileName="../licenses/GPL-3.0-or-later.txt" Type="RCDATA" ResourceName="LICENSE_GPL_3_0_OR_LATER"/>
+        <Resource_5 FileName="../licenses/OpenLDAP-Public-License-2.8.txt" Type="RCDATA" ResourceName="LICENSE_OPENLDAP_PUBLIC_LICENSE_2_8"/>
+        <Resource_6 FileName="../licenses/OpenSSL-Apache-2.0.txt" Type="RCDATA" ResourceName="LICENSE_OPENSSL_APACHE_2_0"/>
+        <Resource_7 FileName="../licenses/SQLite-Public-Domain.txt" Type="RCDATA" ResourceName="LICENSE_SQLITE_PUBLIC_DOMAIN"/>
+        <Resource_8 FileName="../licenses/libsodium-ISC.txt" Type="RCDATA" ResourceName="LICENSE_LIBSODIUM_ISC"/>
+        <Resource_9 FileName="../licenses/THIRD-PARTY-NOTICES.md" Type="RCDATA" ResourceName="LICENSE_THIRD_PARTY_NOTICES"/>
+      </Resources>
+    </General>
+    <VersionInfo>
+      <UseVersionInfo Value="True"/>
+      <MajorVersionNr Value="1"/>
+      <StringTable CompanyName="Cyril LAMY" FileDescription="Rottentree LDAP client" LegalCopyright="GPL-3.0-or-later" ProductName="Rottentree"/>
+    </VersionInfo>
+    <BuildModes>
+      <Item Name="Default" Default="True">
+        <CompilerOptions>
+          <Version Value="11"/>
+          <Conditionals Value="if TargetOS = 'darwin' then&#xA;  CustomOptions += ' -k-ld_classic';"/>
+          <Target>
+            <Filename Value="../bin/rottentree"/>
+          </Target>
+          <SearchPaths>
+            <IncludeFiles Value="$(ProjOutDir)"/>
+            <OtherUnitFiles Value="../src/util;../src/domain;../src/application;../src/ldap;../src/passwords;../src/comparison;../src/storage;../src/crypto;../src/platform;../src/export;../src/ui"/>
+            <UnitOutputDirectory Value="../lib/$(TargetCPU)-$(TargetOS)-debug"/>
+          </SearchPaths>
+          <Parsing>
+            <SyntaxOptions>
+              <SyntaxMode Value="ObjFPC"/>
+            </SyntaxOptions>
+          </Parsing>
+          <CodeGeneration>
+            <Checks>
+              <IOChecks Value="True"/>
+              <RangeChecks Value="True"/>
+              <OverflowChecks Value="True"/>
+              <StackChecks Value="True"/>
+            </Checks>
+          </CodeGeneration>
+          <Linking>
+            <Debugging>
+              <DebugInfoType Value="dsDwarf3"/>
+              <UseHeaptrc Value="False"/>
+            </Debugging>
+            <Options>
+              <Win32>
+                <GraphicApplication Value="True"/>
+              </Win32>
+            </Options>
+          </Linking>
+        </CompilerOptions>
+      </Item>
+      <Item Name="Release">
+        <CompilerOptions>
+          <Version Value="11"/>
+          <Conditionals Value="if TargetOS = 'darwin' then&#xA;  CustomOptions += ' -k-ld_classic';"/>
+          <Target>
+            <Filename Value="../bin/rottentree"/>
+          </Target>
+          <SearchPaths>
+            <IncludeFiles Value="$(ProjOutDir)"/>
+            <OtherUnitFiles Value="../src/util;../src/domain;../src/application;../src/ldap;../src/passwords;../src/comparison;../src/storage;../src/crypto;../src/platform;../src/export;../src/ui"/>
+            <UnitOutputDirectory Value="../lib/$(TargetCPU)-$(TargetOS)-release"/>
+          </SearchPaths>
+          <Parsing>
+            <SyntaxOptions>
+              <SyntaxMode Value="ObjFPC"/>
+            </SyntaxOptions>
+          </Parsing>
+          <CodeGeneration>
+            <SmartLinkUnit Value="True"/>
+            <Checks>
+              <IOChecks Value="True"/>
+              <RangeChecks Value="True"/>
+              <OverflowChecks Value="True"/>
+            </Checks>
+            <Optimizations>
+              <OptimizationLevel Value="2"/>
+            </Optimizations>
+          </CodeGeneration>
+          <Linking>
+            <Debugging>
+              <GenerateDebugInfo Value="False"/>
+              <StripSymbols Value="True"/>
+            </Debugging>
+            <LinkSmart Value="True"/>
+            <Options>
+              <Win32>
+                <GraphicApplication Value="True"/>
+              </Win32>
+            </Options>
+          </Linking>
+        </CompilerOptions>
+      </Item>
+    </BuildModes>
+    <PublishOptions>
+      <Version Value="2"/>
+    </PublishOptions>
+    <RunParams>
+      <FormatVersion Value="2"/>
+    </RunParams>
+    <RequiredPackages>
+      <Item>
+        <PackageName Value="SynEdit"/>
+      </Item>
+      <Item>
+        <PackageName Value="LCL"/>
+      </Item>
+      <Item>
+        <PackageName Value="RottenUI"/>
+        <DefaultFilename Value="../rottenui/rottenui.lpk" Prefer="True"/>
+      </Item>
+    </RequiredPackages>
+    <Units Count="149">
+      <Unit0>
+        <Filename Value="rottentree.lpr"/>
+        <IsPartOfProject Value="True"/>
+      </Unit0>
+      <Unit1>
+        <Filename Value="../src/util/uAppPaths.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit1>
+      <Unit2>
+        <Filename Value="../src/util/uCancel.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit2>
+      <Unit3>
+        <Filename Value="../src/util/uRtBytes.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit3>
+      <Unit4>
+        <Filename Value="../src/util/uVersion.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit4>
+      <Unit5>
+        <Filename Value="../src/domain/uAccountState.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit5>
+      <Unit6>
+        <Filename Value="../src/domain/uAdAccountPlan.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit6>
+      <Unit7>
+        <Filename Value="../src/domain/uAdInfo.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit7>
+      <Unit8>
+        <Filename Value="../src/domain/uAdObjectPlan.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit8>
+      <Unit9>
+        <Filename Value="../src/domain/uAdSchemaMeta.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit9>
+      <Unit10>
+        <Filename Value="../src/domain/uAdSchemaPlan.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit10>
+      <Unit11>
+        <Filename Value="../src/domain/uAdSecurityDescriptor.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit11>
+      <Unit12>
+        <Filename Value="../src/domain/uAttributeChoice.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit12>
+      <Unit13>
+        <Filename Value="../src/domain/uAttributeCodec.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit13>
+      <Unit14>
+        <Filename Value="../src/domain/uBer.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit14>
+      <Unit15>
+        <Filename Value="../src/domain/uChangeSet.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit15>
+      <Unit16>
+        <Filename Value="../src/domain/uClonePlan.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit16>
+      <Unit17>
+        <Filename Value="../src/domain/uConnectionProfile.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit17>
+      <Unit18>
+        <Filename Value="../src/domain/uDirectorySession.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit18>
+      <Unit19>
+        <Filename Value="../src/domain/uEntryCreationPlan.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit19>
+      <Unit20>
+        <Filename Value="../src/domain/uEntryFilter.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit20>
+      <Unit21>
+        <Filename Value="../src/domain/uEntryLookup.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit21>
+      <Unit22>
+        <Filename Value="../src/domain/uFilterBuilder.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit22>
+      <Unit23>
+        <Filename Value="../src/domain/uGroupModel.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit23>
+      <Unit24>
+        <Filename Value="../src/domain/uLdapDn.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit24>
+      <Unit25>
+        <Filename Value="../src/domain/uLdapEntry.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit25>
+      <Unit26>
+        <Filename Value="../src/domain/uLdapErrors.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit26>
+      <Unit27>
+        <Filename Value="../src/domain/uLdapFilter.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit27>
+      <Unit28>
+        <Filename Value="../src/domain/uLdapSchema.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit28>
+      <Unit29>
+        <Filename Value="../src/domain/uLdapSyntaxCheck.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit29>
+      <Unit30>
+        <Filename Value="../src/domain/uLdifAdvice.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit30>
+      <Unit31>
+        <Filename Value="../src/domain/uLdifExport.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit31>
+      <Unit32>
+        <Filename Value="../src/domain/uLdifStore.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit32>
+      <Unit33>
+        <Filename Value="../src/domain/uLdifTargetCheck.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit33>
+      <Unit34>
+        <Filename Value="../src/domain/uMonitorModel.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit34>
+      <Unit35>
+        <Filename Value="../src/domain/uRangeAssembly.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit35>
+      <Unit36>
+        <Filename Value="../src/domain/uSavedSearch.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit36>
+      <Unit37>
+        <Filename Value="../src/domain/uSchemaChangePlan.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit37>
+      <Unit38>
+        <Filename Value="../src/domain/uSchemaDefinition.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit38>
+      <Unit39>
+        <Filename Value="../src/domain/uSearchModel.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit39>
+      <Unit40>
+        <Filename Value="../src/domain/uSensitive.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit40>
+      <Unit41>
+        <Filename Value="../src/domain/uServerKind.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit41>
+      <Unit42>
+        <Filename Value="../src/domain/uSessionModel.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit42>
+      <Unit43>
+        <Filename Value="../src/domain/uSyntaxInfo.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit43>
+      <Unit44>
+        <Filename Value="../src/domain/uTlsPolicy.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit44>
+      <Unit45>
+        <Filename Value="../src/application/uBranchTransfer.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit45>
+      <Unit46>
+        <Filename Value="../src/application/uCertificateInfo.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit46>
+      <Unit47>
+        <Filename Value="../src/application/uCompareReport.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit47>
+      <Unit48>
+        <Filename Value="../src/application/uCompareRunner.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit48>
+      <Unit49>
+        <Filename Value="../src/application/uComponentInfo.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit49>
+      <Unit50>
+        <Filename Value="../src/application/uConnectFlow.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit50>
+      <Unit51>
+        <Filename Value="../src/application/uConnections.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit51>
+      <Unit52>
+        <Filename Value="../src/application/uDirectoryOps.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit52>
+      <Unit53>
+        <Filename Value="../src/application/uDirectoryService.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit53>
+      <Unit54>
+        <Filename Value="../src/application/uDirectoryWorker.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit54>
+      <Unit55>
+        <Filename Value="../src/application/uDocumentSave.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit55>
+      <Unit56>
+        <Filename Value="../src/application/uLdifExportWork.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit56>
+      <Unit57>
+        <Filename Value="../src/application/uLdifSession.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit57>
+      <Unit58>
+        <Filename Value="../src/application/uMembershipExplorer.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit58>
+      <Unit59>
+        <Filename Value="../src/application/uNextId.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit59>
+      <Unit60>
+        <Filename Value="../src/application/uOwnedThread.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit60>
+      <Unit61>
+        <Filename Value="../src/application/uPasswordEntryState.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit61>
+      <Unit62>
+        <Filename Value="../src/application/uPasswordWork.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit62>
+      <Unit63>
+        <Filename Value="../src/application/uProfileCatalog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit63>
+      <Unit64>
+        <Filename Value="../src/application/uProfileExchange.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit64>
+      <Unit65>
+        <Filename Value="../src/application/uProfileProbe.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit65>
+      <Unit66>
+        <Filename Value="../src/application/uSchemaFiles.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit66>
+      <Unit67>
+        <Filename Value="../src/application/uSearchLibrary.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit67>
+      <Unit68>
+        <Filename Value="../src/application/uSubtreeDeletion.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit68>
+      <Unit69>
+        <Filename Value="../src/application/uTaskTracker.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit69>
+      <Unit70>
+        <Filename Value="../src/application/uUiInbox.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit70>
+      <Unit71>
+        <Filename Value="../src/application/uUniqueCheck.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit71>
+      <Unit72>
+        <Filename Value="../src/application/uValueFile.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit72>
+      <Unit73>
+        <Filename Value="../src/application/uWriteJournal.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit73>
+      <Unit74>
+        <Filename Value="../src/ldap/uLdapApi.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit74>
+      <Unit75>
+        <Filename Value="../src/ldap/uLdapMods.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit75>
+      <Unit76>
+        <Filename Value="../src/ldap/uLdapSession.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit76>
+      <Unit77>
+        <Filename Value="../src/ldap/uSchemaReader.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit77>
+      <Unit78>
+        <Filename Value="../src/ldap/uTlsVerify.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit78>
+      <Unit79>
+        <Filename Value="../src/passwords/uBcrypt.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit79>
+      <Unit80>
+        <Filename Value="../src/passwords/uCryptAlgos.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit80>
+      <Unit81>
+        <Filename Value="../src/passwords/uPasswordSchemes.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit81>
+      <Unit82>
+        <Filename Value="../src/passwords/uPwdArgon2.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit82>
+      <Unit83>
+        <Filename Value="../src/passwords/uPwdCore.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit83>
+      <Unit84>
+        <Filename Value="../src/passwords/uPwdCrypt.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit84>
+      <Unit85>
+        <Filename Value="../src/passwords/uPwdDigest.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit85>
+      <Unit86>
+        <Filename Value="../src/passwords/uPwdPbkdf2.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit86>
+      <Unit87>
+        <Filename Value="../src/passwords/uPwdReference.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit87>
+      <Unit88>
+        <Filename Value="../src/comparison/uCanonical.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit88>
+      <Unit89>
+        <Filename Value="../src/comparison/uCompareEngine.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit89>
+      <Unit90>
+        <Filename Value="../src/comparison/uCompareModel.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit90>
+      <Unit91>
+        <Filename Value="../src/comparison/uCsn.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit91>
+      <Unit92>
+        <Filename Value="../src/comparison/uMatchingRules.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit92>
+      <Unit93>
+        <Filename Value="../src/comparison/uSpillStore.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit93>
+      <Unit94>
+        <Filename Value="../src/storage/uProfileJson.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit94>
+      <Unit95>
+        <Filename Value="../src/storage/uRtDocument.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit95>
+      <Unit96>
+        <Filename Value="../src/storage/uSqliteDb.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit96>
+      <Unit97>
+        <Filename Value="../src/crypto/uDocumentCrypto.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit97>
+      <Unit98>
+        <Filename Value="../src/crypto/uSecureBytes.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit98>
+      <Unit99>
+        <Filename Value="../src/platform/uArgon2Api.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit99>
+      <Unit100>
+        <Filename Value="../src/platform/uCertificates.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit100>
+      <Unit101>
+        <Filename Value="../src/platform/uDllHarden.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit101>
+      <Unit102>
+        <Filename Value="../src/platform/uLocalTime.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit102>
+      <Unit103>
+        <Filename Value="../src/platform/uNativeLib.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit103>
+      <Unit104>
+        <Filename Value="../src/platform/uOpenSslApi.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit104>
+      <Unit105>
+        <Filename Value="../src/platform/uResolve.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit105>
+      <Unit106>
+        <Filename Value="../src/platform/uSodiumApi.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit106>
+      <Unit107>
+        <Filename Value="../src/platform/uSqlite3Api.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit107>
+      <Unit108>
+        <Filename Value="../src/export/uLdif.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit108>
+      <Unit109>
+        <Filename Value="../src/export/uSafeOutput.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit109>
+      <Unit110>
+        <Filename Value="../src/ui/uAboutDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit110>
+      <Unit111>
+        <Filename Value="../src/ui/uAccountDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit111>
+      <Unit112>
+        <Filename Value="../src/ui/uAdCreateDialogs.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit112>
+      <Unit113>
+        <Filename Value="../src/ui/uAdProtection.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit113>
+      <Unit114>
+        <Filename Value="../src/ui/uAdSecurityDialogs.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit114>
+      <Unit115>
+        <Filename Value="../src/ui/uAdToolsDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit115>
+      <Unit116>
+        <Filename Value="../src/ui/uAppContext.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit116>
+      <Unit117>
+        <Filename Value="../src/ui/uCertDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit117>
+      <Unit118>
+        <Filename Value="../src/ui/uChangePreview.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit118>
+      <Unit119>
+        <Filename Value="../src/ui/uCompareTab.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit119>
+      <Unit120>
+        <Filename Value="../src/ui/uCreateWizard.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit120>
+      <Unit121>
+        <Filename Value="../src/ui/uDirectoryTab.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit121>
+      <Unit122>
+        <Filename Value="../src/ui/uDocDialogs.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit122>
+      <Unit123>
+        <Filename Value="../src/ui/uDynamicGroupDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit123>
+      <Unit124>
+        <Filename Value="../src/ui/uEntryEditor.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit124>
+      <Unit125>
+        <Filename Value="../src/ui/uEntryPickDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit125>
+      <Unit126>
+        <Filename Value="../src/ui/uEntryTab.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit126>
+      <Unit127>
+        <Filename Value="../src/ui/uExportActions.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit127>
+      <Unit128>
+        <Filename Value="../src/ui/uFilterBuilderDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit128>
+      <Unit129>
+        <Filename Value="../src/ui/uLdifExportDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit129>
+      <Unit130>
+        <Filename Value="../src/ui/uLdifHighlighter.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit130>
+      <Unit131>
+        <Filename Value="../src/ui/uLdifTab.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit131>
+      <Unit132>
+        <Filename Value="../src/ui/uMainForm.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit132>
+      <Unit133>
+        <Filename Value="../src/ui/uMembershipDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit133>
+      <Unit134>
+        <Filename Value="../src/ui/uMonitorTab.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit134>
+      <Unit135>
+        <Filename Value="../src/ui/uOpsDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit135>
+      <Unit136>
+        <Filename Value="../src/ui/uPasswordDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit136>
+      <Unit137>
+        <Filename Value="../src/ui/uPreferences.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit137>
+      <Unit138>
+        <Filename Value="../src/ui/uProfileDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit138>
+      <Unit139>
+        <Filename Value="../src/ui/uProfileExchangeDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit139>
+      <Unit140>
+        <Filename Value="../src/ui/uProfileSidebar.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit140>
+      <Unit141>
+        <Filename Value="../src/ui/uSchemaDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit141>
+      <Unit142>
+        <Filename Value="../src/ui/uSearchTab.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit142>
+      <Unit143>
+        <Filename Value="../src/ui/uStrings.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit143>
+      <Unit144>
+        <Filename Value="../src/ui/uSubtreeProgress.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit144>
+      <Unit145>
+        <Filename Value="../src/ui/uTaskDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit145>
+      <Unit146>
+        <Filename Value="../src/ui/uToolsDialogs.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit146>
+      <Unit147>
+        <Filename Value="../src/ui/uTransferDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit147>
+      <Unit148>
+        <Filename Value="../src/ui/uValueDialog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit148>
+    </Units>
+  </ProjectOptions>
+  <CompilerOptions>
+    <Version Value="11"/>
+    <Conditionals Value="if TargetOS = 'darwin' then&#xA;  CustomOptions += ' -k-ld_classic';"/>
+    <Target>
+      <Filename Value="../bin/rottentree"/>
+    </Target>
+    <SearchPaths>
+      <IncludeFiles Value="$(ProjOutDir)"/>
+      <OtherUnitFiles Value="../src/util;../src/domain;../src/application;../src/ldap;../src/passwords;../src/comparison;../src/storage;../src/crypto;../src/platform;../src/export;../src/ui"/>
+      <UnitOutputDirectory Value="../lib/$(TargetCPU)-$(TargetOS)-debug"/>
+    </SearchPaths>
+    <Linking>
+      <Options>
+        <Win32>
+          <GraphicApplication Value="True"/>
+        </Win32>
+      </Options>
+    </Linking>
+  </CompilerOptions>
+</CONFIG>

@@ -1,0 +1,38 @@
+# artefacts Lazarus / FPC
+lib/
+backup/
+*.compiled
+*.o
+*.ppu
+*.a
+*.or
+*.lps
+*.dbg
+app/*.res
+# residus de lien FPC/ld, poses dans le repertoire courant
+linkfiles*.res
+symbol_order*.fpc
+
+# Executables produits dans bin/. Les DLL Windows, elles, SONT versionnees
+# (provenance et empreintes: packaging/windows/DEPS.md): un clone doit compiler
+# et tourner sans une soiree de provisioning.
+bin/*
+!bin/*.dll
+
+# fetch-deps-windows.ps1: paquets MSYS2 telecharges, outils extraits
+third_party/
+
+# Packaging: sorties de build, pas versionnees
+dist/*/build/
+dist/windows/output/
+# regeneres a chaque compilation de l'installeur, depuis leurs sources
+dist/windows/third-party.txt
+dist/windows/version.iss
+
+# systeme, editeurs
+.DS_Store
+Thumbs.db
+.vscode/
+*.bak
+*~
+__pycache__/

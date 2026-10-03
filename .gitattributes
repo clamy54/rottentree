@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+# Scripts Windows en CRLF
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+
+# Binaires: jamais de conversion de fin de ligne, jamais de diff textuel
+*.dll  binary
+*.png  binary
+*.ico  binary
+*.icns binary
+*.ttf  binary
+*.res  binary
