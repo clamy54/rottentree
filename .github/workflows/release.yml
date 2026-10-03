@@ -120,6 +120,11 @@ jobs:
         # package-macos.sh les embarque dans Contents/Frameworks et echoue si
         # une seule garde une reference vers /opt/homebrew
         run: brew install openldap openssl@3 libsodium sqlite argon2
+      - name: Python et Pillow (icone .icns)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --quiet pillow
       - name: Construire Rottentree.app (release, signature ad hoc)
         env:
           LAZBUILD: /usr/local/bin/lazbuild

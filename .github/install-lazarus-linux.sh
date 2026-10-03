@@ -62,5 +62,11 @@ if [ "$(git -C "$laz" rev-parse HEAD 2>/dev/null || true)" != "$LAZARUS_COMMIT" 
   git -C "$laz" checkout -q FETCH_HEAD
 fi
 make -C "$laz" lazbuild >/dev/null
-sudo ln -sf "$laz/lazbuild" /usr/local/bin/lazbuild
+# Un wrapper, pas un lien symbolique: lazbuild deduit le repertoire de Lazarus de
+# son propre chemin, et depuis /usr/local/bin il n'y trouve pas l'ombre d'une LCL.
+sudo tee /usr/local/bin/lazbuild >/dev/null <<EOF
+#!/bin/sh
+exec "$laz/lazbuild" --lazarusdir="$laz" "\$@"
+EOF
+sudo chmod 0755 /usr/local/bin/lazbuild
 lazbuild --version
