@@ -4,8 +4,8 @@ unit uDocDialogs;
 
 {$mode objfpc}{$H+}
 
-// Saisie masquee des mots de passe (document chiffre, secrets LDAP). Pas d'historique
-// de saisie, controle vide a la fermeture; la copie rendue est a effacer par l'appelant.
+// Mots de passe du document et secrets de bind, sur le dialogue du kit: champ masque a la
+// main, vide a la fermeture. La copie rendue est a effacer par l'appelant.
 
 interface
 
@@ -47,126 +47,50 @@ function AskBindSecret(AOwner: TComponent; const AServer, ABadge, AIdentity: str
 implementation
 
 uses
-  Dialogs, uTheme;
+  uRtPassword;
 
 type
-  TPasswordDialog = class(TRtDialog)
+  TDocPasswordDialog = class(TRtPasswordDialog)
   public
-    Edit1, Edit2: TEdit;
-    Info: TLabel;
-    Remember: TRtCheckBox;
-    Confirm: Boolean;
-    procedure ShowClick(Sender: TObject);
-    procedure OkClick(Sender: TObject);
-    procedure CloseQueryHandler(Sender: TObject; var CanClose: Boolean);
+    procedure CheckLength(Sender: TObject; const ASecret: RawByteString; var ARefusal: string);
   end;
 
-procedure TPasswordDialog.ShowClick(Sender: TObject);
+procedure TDocPasswordDialog.CheckLength(Sender: TObject; const ASecret: RawByteString;
+  var ARefusal: string);
 begin
-  if TRtCheckBox(Sender).Checked then
-  begin
-    Edit1.PasswordChar := #0;
-    if Edit2 <> nil then Edit2.PasswordChar := #0;
-  end
-  else
-  begin
-    Edit1.PasswordChar := '*';
-    if Edit2 <> nil then Edit2.PasswordChar := '*';
-  end;
-end;
-
-procedure TPasswordDialog.OkClick(Sender: TObject);
-begin
-  ModalResult := mrOk;
-end;
-
-procedure TPasswordDialog.CloseQueryHandler(Sender: TObject; var CanClose: Boolean);
-begin
-  if (ModalResult <> mrOk) or not Confirm then Exit;
-  if Edit1.Text <> Edit2.Text then
-  begin
-    Info.Caption := rsMismatch;
-    Info.Font.Color := DialogStateColor(usError);
-    CanClose := False;
-  end
-  else if Length(Edit1.Text) < 8 then
-  begin
-    Info.Caption := rsTooShort;
-    Info.Font.Color := DialogStateColor(usError);
-    CanClose := False;
-  end;
-end;
-
-function MakePasswordEdit(AParent: TWinControl; const ACaption: string): TEdit;
-var
-  row: TPanel;
-begin
-  row := MakeFieldRow(AParent, ACaption, 110);
-  Result := TEdit.Create(row);
-  Result.Parent := row;
-  Result.Align := alClient;
-  Result.BorderSpacing.Around := 3;
-  Result.PasswordChar := '*';
-  Result.AutoSelect := False;
-end;
-
-procedure WipeEdit(AEdit: TEdit);
-begin
-  if AEdit = nil then Exit;
-  // Le widget natif peut garder sa propre copie du texte, hors de notre portee.
-  // On ecrase ce qu'on peut et on n'en dit pas plus qu'on n'en sait.
-  AEdit.Text := StringOfChar(' ', Length(AEdit.Text));
-  AEdit.Text := '';
-end;
-
-function RunPassword(ADlg: TPasswordDialog; out APassword: RawByteString): Boolean;
-begin
-  ADlg.OnCloseQuery := @ADlg.CloseQueryHandler;
-  ADlg.ApplyTheme;
-  ADlg.ActiveControl := ADlg.Edit1;
-  Result := ADlg.ShowModal = mrOk;
-  if Result then
-    APassword := ADlg.Edit1.Text
-  else
-    APassword := '';
-  WipeEdit(ADlg.Edit1);
-  WipeEdit(ADlg.Edit2);
+  if Length(ASecret) < 8 then ARefusal := rsTooShort;
 end;
 
 function AskNewDocumentPassword(AOwner: TComponent; const AFileName: string; AChange: Boolean;
   out APassword: RawByteString): Boolean;
 var
-  d: TPasswordDialog;
-  show: TRtCheckBox;
-  intro: TLabel;
+  d: TDocPasswordDialog;
   name: string;
 begin
   name := ExtractFileName(AFileName);
   if AChange then
-    d := TPasswordDialog.CreateDialog(AOwner, rsChangePwTitle, 520, 300)
+    d := TDocPasswordDialog.CreateDialog(AOwner, rsChangePwTitle, 520, 300)
   else
-    d := TPasswordDialog.CreateDialog(AOwner, rsNewDocTitle, 520, 300);
+    d := TDocPasswordDialog.CreateDialog(AOwner, rsNewDocTitle, 520, 300);
   d.SetIcon('lock');
   try
-    d.Confirm := True;
     if AChange then
-      intro := MakeLabel(d.Body, Format(rsChangePwIntro, [name]))
+      d.AddText(Format(rsChangePwIntro, [name]))
     else
-      intro := MakeLabel(d.Body, Format(rsNewDocIntro, [name]));
-    intro.WordWrap := True;
-    MakeLabel(d.Body, rsNoRecovery).Font.Color := DialogStateColor(usWarning);
-    d.Edit1 := MakePasswordEdit(d.Body, rsNewPassword);
-    d.Edit2 := MakePasswordEdit(d.Body, rsRepeatPassword);
-    show := MakeCheck(d.Body, rsShow);
-    show.OnClick := @d.ShowClick;
-    d.Info := MakeLabel(d.Body, rsMinLength);
-    d.Info.Font.Color := DialogStateColor(usMuted);
+      d.AddText(Format(rsNewDocIntro, [name]));
+    d.AddText(rsNoRecovery).Font.Color := DialogStateColor(usWarning);
+    d.AddField(rsNewPassword);
+    d.AddConfirm(rsRepeatPassword);
+    d.AddReveal(rsShow);
+    d.AddStatus(rsMinLength);
+    d.MismatchText := rsMismatch;
+    d.OnValidate := @d.CheckLength;
     if AChange then
       d.AddButton(rsChangePwButton, mrOk, True)
     else
       d.AddButton(rsNewDocButton, mrOk, True);
     d.AddButton(rsCancel, mrCancel, False, True);
-    Result := RunPassword(d, APassword);
+    Result := d.Execute(APassword);
   finally
     d.Free;
   end;
@@ -175,19 +99,19 @@ end;
 function AskDocumentPassword(AOwner: TComponent; const AFileName: string; AUnlock: Boolean;
   out APassword: RawByteString): Boolean;
 var
-  d: TPasswordDialog;
+  d: TRtPasswordDialog;
   title: string;
 begin
   if AUnlock then title := rsUnlockTitle else title := rsOpenDocTitle;
-  d := TPasswordDialog.CreateDialog(AOwner, title, 460, 180);
+  d := TRtPasswordDialog.CreateDialog(AOwner, title, 460, 180);
   d.SetIcon('lock');
   try
-    MakeLabel(d.Body, AFileName);
-    d.Edit1 := MakePasswordEdit(d.Body, rsPassword);
-    d.Info := MakeLabel(d.Body, '');
+    d.AddText(AFileName);
+    d.AddField(rsPassword);
+    d.AddStatus;
     d.AddButton(rsOk, mrOk, True);
     d.AddButton(rsCancel, mrCancel, False, True);
-    Result := RunPassword(d, APassword);
+    Result := d.Execute(APassword);
   finally
     d.Free;
   end;
@@ -196,21 +120,23 @@ end;
 function AskBindSecret(AOwner: TComponent; const AServer, ABadge, AIdentity: string;
   AOfferRemember: Boolean; out ASecret: RawByteString; out ARemember: Boolean): Boolean;
 var
-  d: TPasswordDialog;
+  d: TRtPasswordDialog;
+  remember: TRtCheckBox;
 begin
-  d := TPasswordDialog.CreateDialog(AOwner, Format(rsSecretTitle, [AIdentity]), 520, 200);
+  d := TRtPasswordDialog.CreateDialog(AOwner, Format(rsSecretTitle, [AIdentity]), 520, 200);
   d.SetIcon('key');
   try
     d.SetTarget(AServer, ABadge);
-    MakeLabel(d.Body, AIdentity);
-    d.Edit1 := MakePasswordEdit(d.Body, rsPassword);
+    d.AddText(AIdentity);
+    d.AddField(rsPassword);
+    remember := nil;
     if AOfferRemember then
-      d.Remember := MakeCheck(d.Body, rsRememberSecret);
-    d.Info := MakeLabel(d.Body, '');
+      remember := MakeCheck(d.Body, rsRememberSecret);
+    d.AddStatus;
     d.AddButton(rsOk, mrOk, True);
     d.AddButton(rsCancel, mrCancel, False, True);
-    Result := RunPassword(d, ASecret);
-    ARemember := Result and (d.Remember <> nil) and d.Remember.Checked;
+    Result := d.Execute(ASecret);
+    ARemember := Result and (remember <> nil) and remember.Checked;
   finally
     d.Free;
   end;

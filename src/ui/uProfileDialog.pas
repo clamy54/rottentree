@@ -11,7 +11,8 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, StdCtrls, ExtCtrls, ComCtrls, Dialogs, LazUTF8,
-  uUiKit, uConnectionProfile, uUiInbox, uDirectoryWorker, uProfileProbe, uRtCheck, uRtCombo, uRtList;
+  uUiKit, uConnectionProfile, uUiInbox, uDirectoryWorker, uProfileProbe, uRtCheck, uRtCombo, uRtList,
+  uRtSecretEdit;
 
 resourcestring
   rsProfileTitle = 'Connection profile';
@@ -100,7 +101,8 @@ type
   private
     FProfile: TConnectionProfile;
     FPages: TPageControl;
-    FName, FDesc, FBadge, FHost, FPort, FBindDn, FAuthz, FSecret: TEdit;
+    FName, FDesc, FBadge, FHost, FPort, FBindDn, FAuthz: TEdit;
+    FSecret: TRtSecretEdit;
     FTransport, FAuthMode, FRevocation, FAliases, FFolder, FServerKind: TRtComboBox;
     FReadOnly, FAllowPlain, FRemember, FAppendBase, FShowConfig: TRtCheckBox;
     FBindPreview: TLabel;
@@ -236,32 +238,15 @@ begin
 end;
 
 function TProfileDialog.EditRow(AParent: TWinControl; const ACaption: string): TEdit;
-var
-  row: TPanel;
 begin
-  row := MakeFieldRow(AParent, ACaption, 190);
-  Result := TEdit.Create(row);
-  Result.Parent := row;
-  Result.Align := alClient;
-  Result.BorderSpacing.Around := 3;
+  Result := MakeEditRow(AParent, ACaption, 190);
   Result.OnChange := @SettingChanged;
 end;
 
 function TProfileDialog.ComboRow(AParent: TWinControl; const ACaption: string;
   const AItems: array of string): TRtComboBox;
-var
-  row: TPanel;
-  i: Integer;
 begin
-  row := MakeFieldRow(AParent, ACaption, 190);
-  Result := TRtComboBox.Create(row);
-  Result.Parent := row;
-  Result.Align := alClient;
-  Result.Style := csDropDownList;
-  Result.BorderSpacing.Around := 3;
-  for i := 0 to High(AItems) do
-    Result.Items.Add(AItems[i]);
-  if Result.Items.Count > 0 then Result.ItemIndex := 0;
+  Result := MakeComboRow(AParent, ACaption, AItems, 190);
   Result.OnChange := @SettingChanged;
 end;
 
@@ -299,13 +284,12 @@ begin
   FBindDn := EditRow(AParent, rsBindDn);
   FAppendBase := MakeCheck(AParent, rsAppendBase);
   FAppendBase.OnClick := @SettingChanged;
-  FBindPreview := MakeLabel(AParent, '');
-  FBindPreview.ShowAccelChar := False;
+  FBindPreview := MakeDataLabel(AParent, '');
   FBindPreview.Font.Color := DialogStateColor(usMuted);
   FAuthz := EditRow(AParent, rsAuthzId);
   FAuthzHint := MakeLabel(AParent, rsAuthzHint);
-  FSecret := EditRow(AParent, rsSecret);
-  FSecret.PasswordChar := '*';
+  FSecret := MakeSecretRow(AParent, rsSecret, 190);
+  FSecret.OnChange := @SettingChanged;
   FSecretHint := MakeLabel(AParent, rsSecretHint);
   FRemember := MakeCheck(AParent, rsRemember);
   FAllowPlain := MakeCheck(AParent, rsAllowPlain);
@@ -337,16 +321,10 @@ begin
   FPinList.Align := alClient;
   MakeButton(MakePanel(row, alRight, 130), rsAddPin, @AddPinClick, alTop);
   MakeButton(TWinControl(row.Controls[row.ControlCount - 1]), rsRemove, @RemovePinClick, alTop);
-  row := MakeFieldRow(AParent, rsClientCert, 190);
-  FClientCert := TEdit.Create(row);
-  FClientCert.Parent := row;
-  FClientCert.Align := alClient;
-  MakeButton(row, rsBrowse, @BrowseCertClick, alRight);
-  row := MakeFieldRow(AParent, rsClientKey, 190);
-  FClientKey := TEdit.Create(row);
-  FClientKey.Parent := row;
-  FClientKey.Align := alClient;
-  MakeButton(row, rsBrowse, @BrowseKeyClick, alRight);
+  FClientCert := MakeEditRow(AParent, rsClientCert, 190);
+  MakeButton(FClientCert.Parent, rsBrowse, @BrowseCertClick, alRight);
+  FClientKey := MakeEditRow(AParent, rsClientKey, 190);
+  MakeButton(FClientKey.Parent, rsBrowse, @BrowseKeyClick, alRight);
 end;
 
 procedure TProfileDialog.BuildBases(AParent: TWinControl);
@@ -685,7 +663,7 @@ begin
     // Le mot de passe ne part qu'en bind simple. En EXTERNAL, l'identite vient du champ
     // dedie du profil, jamais de celui-ci.
     if not SimpleBindSelected then secret := ''
-    else secret := FSecret.Text;
+    else FSecret.GetSecret(secret);
     try
       if AFetch then
         FProbe.Start(tmp, secret, pkFetchBases, Self)
@@ -834,7 +812,7 @@ end;
 function TProfileDialog.SecretText: RawByteString;
 begin
   if SimpleBindSelected then
-    Result := FSecret.Text
+    FSecret.GetSecret(Result)
   else
     Result := '';
 end;

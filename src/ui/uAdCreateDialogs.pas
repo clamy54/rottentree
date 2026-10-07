@@ -13,8 +13,8 @@ interface
 
 uses
   Classes, SysUtils, Controls, StdCtrls, ExtCtrls, Forms, Graphics, Dialogs, LCLType,
-  uUiKit, uAppContext, uRtCombo, uRtCheck, uRtButton, uIcons, uUiInbox, uTaskTracker, uLdapEntry,
-  uAdObjectPlan, uAdProtection, uTaskDialog;
+  uUiKit, uAppContext, uRtCombo, uRtCheck, uRtButton, uRtWizard, uUiInbox, uTaskTracker, uLdapEntry,
+  uAdObjectPlan, uAdProtection, uTaskDialog, uRtSecretEdit;
 
 type
   TAdCreateKind = (ackUser, ackComputer, ackGroup, ackOrgUnit);
@@ -33,13 +33,11 @@ type
   private
     FParentDn: string;
     FKind: TAdCreateKind;
-    FPage: Integer;
-    FPages: array[0..1] of TPanel;
-    FBannerIcon: TRtIcon;
-    FPathLabel, FDnLabel, FRightsNote: TLabel;
-    FStepper: TRtStepper;
-    FBack, FNext, FCancel, FEditAgain: TButton;
-    FFirst, FInitials, FLast, FFull, FLogon, FSam, FPwd1, FPwd2: TEdit;
+    FWizard: TRtWizard;
+    FRightsNote: TLabel;
+    FEditAgain: TButton;
+    FFirst, FInitials, FLast, FFull, FLogon, FSam: TEdit;
+    FPwd1, FPwd2: TRtSecretEdit;
     FSuffix: TRtComboBox;
     FNetbiosLabel: TLabel;
     FMustChange, FNeverExpires, FDisabled: TRtCheckBox;
@@ -66,13 +64,14 @@ type
     procedure BuildOuPage;
     procedure ProtectDone(Sender: TObject);
     function FieldRow(AParent: TWinControl; const ACaption: string): TPanel;
-    function NewEdit(ARow: TPanel; APassword: Boolean = False): TEdit;
+    function NewEdit(ARow: TPanel): TEdit;
     procedure FieldChanged(Sender: TObject);
     procedure ScopeChanged(Sender: TObject);
-    procedure NextClick(Sender: TObject);
-    procedure BackClick(Sender: TObject);
     procedure EditAgainClick(Sender: TObject);
-    procedure ShowPage(AIndex: Integer);
+    procedure PageShown(Sender: TObject);
+    procedure LastPageNext(Sender: TObject);
+    procedure WizardButtons(Sender: TObject; var AButtons: TRtWizardButtons);
+    function GetPage: Integer;
     procedure StartDomainReads;
     procedure TaskMessage(AMsg: TUiMessage; const ATask: TTrackedTask; AEnding: TTaskEnding);
     procedure UpdateState;
@@ -105,7 +104,7 @@ type
     function NextCaption: string;
     function SuffixesText: string;
     property State: TAdCreateState read FState;
-    property Page: Integer read FPage;
+    property Page: Integer read GetPage;
     property ProtectJob: TDeletionProtectionJob read FProtectJob;
     function RightsText: string;
     property CreatedDn: string read FCreatedDn;
@@ -167,8 +166,6 @@ resourcestring
   rsAcScopeGlobal = 'Global: members from this domain only; usable in any domain of the forest.';
   rsAcScopeUniversal = 'Universal: members from any domain of the forest; usable in any domain of the forest.';
   rsAcTypeSecurity = 'Security groups can be given permissions; distribution groups only serve e-mail lists.';
-  rsAcBack = '< Back';
-  rsAcNext = 'Next >';
   rsAcCreate = 'Create';
   rsAcStepNames = 'Names';
   rsAcStepPassword = 'Password';
@@ -222,22 +219,6 @@ begin
   end;
 end;
 
-// Le texte rendu par AEdit.Text est ecrase, mais le tampon interne du widgetset reste hors
-// d'atteinte: y mettre '' le remplace sans garantie. Nos propres copies, elles, sont ecrasees.
-procedure WipeEditText(AEdit: TEdit);
-var
-  s: string;
-begin
-  if AEdit = nil then Exit;
-  s := AEdit.Text;
-  if s <> '' then
-  begin
-    UniqueString(s);
-    FillChar(s[1], Length(s), 0);
-  end;
-  AEdit.Text := '';
-end;
-
 constructor TAdCreateDialog.CreateFor(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid,
   AParentDn: string; AKind: TAdCreateKind);
 var
@@ -271,7 +252,7 @@ begin
   Tasks.OnMessage := @TaskMessage;
   BuildUi;
   ApplyTheme;
-  ShowPage(0);
+  FWizard.ShowPage(0);
   StartDomainReads;
 end;
 
@@ -291,8 +272,8 @@ end;
 
 procedure TAdCreateDialog.WipePasswords;
 begin
-  WipeEditText(FPwd1);
-  WipeEditText(FPwd2);
+  if FPwd1 <> nil then FPwd1.Wipe;
+  if FPwd2 <> nil then FPwd2.Wipe;
 end;
 
 function TAdCreateDialog.FieldRow(AParent: TWinControl; const ACaption: string): TPanel;
@@ -300,51 +281,39 @@ begin
   Result := MakeFieldRow(AParent, ACaption, 230);
 end;
 
-function TAdCreateDialog.NewEdit(ARow: TPanel; APassword: Boolean): TEdit;
+function TAdCreateDialog.NewEdit(ARow: TPanel): TEdit;
 begin
   Result := MakeEdit(ARow, alClient);
-  if APassword then Result.PasswordChar := '*';
   Result.OnChange := @FieldChanged;
 end;
 
 procedure TAdCreateDialog.BuildUi;
+const
+  ICONS: array[TAdCreateKind] of string = ('user', 'device-desktop', 'users', 'folder');
 var
-  banner, txt: TPanel;
-  lbl: TLabel;
+  i: Integer;
 begin
-  banner := MakePanel(Body, alTop, 64);
-  FBannerIcon := TRtIcon.Create(banner);
-  FBannerIcon.Parent := banner;
-  FBannerIcon.Align := alLeft;
-  FBannerIcon.Width := 48;
-  txt := MakePanel(banner, alClient);
-  lbl := MakeLabel(txt, rsAcCreateIn, alTop);
-  lbl.Font.Color := DialogStateColor(usMuted);
-  FPathLabel := MakeLabel(txt, AdCanonicalPath(FParentDn), alTop);
-  FPathLabel.Font.Style := [fsBold];
-  FPathLabel.ShowAccelChar := False;
-  FDnLabel := MakeLabel(txt, FParentDn, alTop);
-  FDnLabel.ShowAccelChar := False;
-  FDnLabel.Font.Color := DialogStateColor(usMuted);
-  banner.Height := Max(FBannerIcon.Width, StackedLabelsHeight(txt) + 6);
+  FWizard := TRtWizard.Create(Self);
+  FWizard.OnUpdateButtons := @WizardButtons;
+  FWizard.OnPageShown := @PageShown;
+  FWizard.OnFinish := @LastPageNext;
+  FWizard.SetBanner(ICONS[FKind], 32, rsAcCreateIn, AdCanonicalPath(FParentDn), FParentDn);
   FRightsNote := MakeLabel(Body, '', alTop);
   FRightsNote.WordWrap := True;
   FRightsNote.Visible := False;
   FRightsNote.BorderSpacing.Top := 6;
-  FStepper := TRtStepper.Create(Body);
-  FStepper.Parent := Body;
-  StackTop(FStepper);
-  FStepper.Align := alTop;
-  FStepper.BorderSpacing.Top := 8;
-  FStepper.SetSteps([rsAcStepNames, rsAcStepPassword]);
-  FStepper.Visible := FKind = ackUser;
-  FStatus := MakeLabel(Body, '', alBottom);
+  FStatus := MakeDataLabel(Body, '', alBottom);
   FStatus.WordWrap := True;
-  FStatus.ShowAccelChar := False;
-  FPages[0] := MakePanel(Body, alClient);
-  FPages[0].BorderSpacing.Top := 6;
-  FPages[1] := MakePanel(Body, alClient);
-  FPages[1].BorderSpacing.Top := 6;
+  if FKind = ackUser then
+  begin
+    FWizard.AddPage(rsAcStepNames);
+    FWizard.AddPage(rsAcStepPassword);
+  end
+  else
+    FWizard.AddPage('');
+  FWizard.Stepper.BorderSpacing.Top := 8;
+  for i := 0 to FWizard.PageCount - 1 do
+    FWizard.Pages[i].BorderSpacing.Top := 6;
   case FKind of
     ackUser: BuildUserPages;
     ackComputer: BuildComputerPage;
@@ -352,11 +321,7 @@ begin
   else
     BuildGroupPage;
   end;
-  FCancel := AddButton(rsCancel, mrCancel, False, True);
-  FNext := AddButton(rsAcCreate, mrNone, True);
-  FNext.OnClick := @NextClick;
-  FBack := AddButton(rsAcBack, mrNone);
-  FBack.OnClick := @BackClick;
+  FWizard.AddButtons(rsCancel, mrCancel, rsAcCreate);
   FEditAgain := AddButton(rsAcEditAgain, mrNone);
   FEditAgain.OnClick := @EditAgainClick;
   FEditAgain.Visible := False;
@@ -367,18 +332,18 @@ var
   row: TPanel;
   lbl: TLabel;
 begin
-  row := FieldRow(FPages[0], rsAcFirst);
+  row := FieldRow(FWizard.Pages[0], rsAcFirst);
   FInitials := MakeEdit(row, alRight);
   FInitials.Width := 70;
   FInitials.OnChange := @FieldChanged;
   lbl := MakeLabel(row, rsAcInitials, alRight);
   lbl.BorderSpacing.Left := 10;
   FFirst := NewEdit(row);
-  row := FieldRow(FPages[0], rsAcLast);
+  row := FieldRow(FWizard.Pages[0], rsAcLast);
   FLast := NewEdit(row);
-  row := FieldRow(FPages[0], rsAcFull);
+  row := FieldRow(FWizard.Pages[0], rsAcFull);
   FFull := NewEdit(row);
-  row := FieldRow(FPages[0], rsAcLogon);
+  row := FieldRow(FWizard.Pages[0], rsAcLogon);
   row.BorderSpacing.Top := 12;
   FSuffix := TRtComboBox.Create(row);
   FSuffix.Parent := row;
@@ -389,23 +354,22 @@ begin
   FSuffix.ItemIndex := 0;
   FSuffix.OnChange := @FieldChanged;
   FLogon := NewEdit(row);
-  row := FieldRow(FPages[0], rsAcSam);
-  FNetbiosLabel := MakeLabel(row, FNetbios + '\', alLeft);
-  FNetbiosLabel.ShowAccelChar := False;
+  row := FieldRow(FWizard.Pages[0], rsAcSam);
+  FNetbiosLabel := MakeDataLabel(row, FNetbios + '\', alLeft);
   FSam := NewEdit(row);
-  row := FieldRow(FPages[1], rsAcPwd);
-  FPwd1 := NewEdit(row, True);
-  row := FieldRow(FPages[1], rsAcPwdConfirm);
-  FPwd2 := NewEdit(row, True);
-  FMustChange := MakeCheck(FPages[1], rsAcMustChange);
+  FPwd1 := MakeSecretRow(FWizard.Pages[1], rsAcPwd, 230);
+  FPwd1.OnChange := @FieldChanged;
+  FPwd2 := MakeSecretRow(FWizard.Pages[1], rsAcPwdConfirm, 230);
+  FPwd2.OnChange := @FieldChanged;
+  FMustChange := MakeCheck(FWizard.Pages[1], rsAcMustChange);
   FMustChange.BorderSpacing.Top := 10;
   FMustChange.Checked := True;
   FMustChange.OnChange := @FieldChanged;
-  FNeverExpires := MakeCheck(FPages[1], rsAcNeverExpires);
+  FNeverExpires := MakeCheck(FWizard.Pages[1], rsAcNeverExpires);
   FNeverExpires.OnChange := @FieldChanged;
-  FDisabled := MakeCheck(FPages[1], rsAcDisabled);
+  FDisabled := MakeCheck(FWizard.Pages[1], rsAcDisabled);
   FDisabled.OnChange := @FieldChanged;
-  lbl := MakeLabel(FPages[1], rsAcPwdNote, alTop);
+  lbl := MakeLabel(FWizard.Pages[1], rsAcPwdNote, alTop);
   lbl.WordWrap := True;
   lbl.BorderSpacing.Top := 12;
   lbl.Font.Color := DialogStateColor(usMuted);
@@ -416,14 +380,14 @@ var
   row: TPanel;
   lbl: TLabel;
 begin
-  row := FieldRow(FPages[0], rsAcComputerName);
+  row := FieldRow(FWizard.Pages[0], rsAcComputerName);
   FName := NewEdit(row);
-  row := FieldRow(FPages[0], rsAcComputerSam);
+  row := FieldRow(FWizard.Pages[0], rsAcComputerSam);
   FObjSam := NewEdit(row);
-  FPreW2000 := MakeCheck(FPages[0], rsAcPreW2000);
+  FPreW2000 := MakeCheck(FWizard.Pages[0], rsAcPreW2000);
   FPreW2000.BorderSpacing.Top := 10;
   FPreW2000.OnChange := @FieldChanged;
-  lbl := MakeLabel(FPages[0], rsAcPreW2000Note, alTop);
+  lbl := MakeLabel(FWizard.Pages[0], rsAcPreW2000Note, alTop);
   lbl.WordWrap := True;
   lbl.BorderSpacing.Top := 10;
   lbl.Font.Color := DialogStateColor(usMuted);
@@ -434,27 +398,27 @@ var
   row: TPanel;
   lbl: TLabel;
 begin
-  row := FieldRow(FPages[0], rsAcGroupName);
+  row := FieldRow(FWizard.Pages[0], rsAcGroupName);
   FName := NewEdit(row);
-  row := FieldRow(FPages[0], rsAcGroupSam);
+  row := FieldRow(FWizard.Pages[0], rsAcGroupSam);
   FObjSam := NewEdit(row);
-  row := FieldRow(FPages[0], rsAcScope);
+  row := FieldRow(FWizard.Pages[0], rsAcScope);
   row.BorderSpacing.Top := 12;
   FScope := TRtSegmented.Create(row);
   FScope.Parent := row;
   FScope.Align := alLeft;
   FScope.SetChoices([rsAcDomainLocal, rsAcGlobal, rsAcUniversal], Ord(agsGlobal));
   FScope.OnChange := @ScopeChanged;
-  row := FieldRow(FPages[0], rsAcType);
+  row := FieldRow(FWizard.Pages[0], rsAcType);
   FGroupType := TRtSegmented.Create(row);
   FGroupType.Parent := row;
   FGroupType.Align := alLeft;
   FGroupType.SetChoices([rsAcSecurity, rsAcDistribution], 0);
   FGroupType.OnChange := @ScopeChanged;
-  FScopeNote := MakeLabel(FPages[0], '', alTop);
+  FScopeNote := MakeLabel(FWizard.Pages[0], '', alTop);
   FScopeNote.WordWrap := True;
   FScopeNote.BorderSpacing.Top := 10;
-  lbl := MakeLabel(FPages[0], rsAcTypeSecurity, alTop);
+  lbl := MakeLabel(FWizard.Pages[0], rsAcTypeSecurity, alTop);
   lbl.WordWrap := True;
   lbl.Font.Color := DialogStateColor(usMuted);
 end;
@@ -464,13 +428,13 @@ var
   row: TPanel;
   lbl: TLabel;
 begin
-  row := FieldRow(FPages[0], rsAcOuName);
+  row := FieldRow(FWizard.Pages[0], rsAcOuName);
   FName := NewEdit(row);
-  FProtect := MakeCheck(FPages[0], rsAcProtect);
+  FProtect := MakeCheck(FWizard.Pages[0], rsAcProtect);
   FProtect.BorderSpacing.Top := 10;
   FProtect.Checked := True;
   FProtect.OnChange := @FieldChanged;
-  lbl := MakeLabel(FPages[0], rsAcProtectNote, alTop);
+  lbl := MakeLabel(FWizard.Pages[0], rsAcProtectNote, alTop);
   lbl.WordWrap := True;
   lbl.BorderSpacing.Top := 10;
   lbl.Font.Color := DialogStateColor(usMuted);
@@ -481,15 +445,8 @@ var
   sz: Integer;
 begin
   inherited ApplyShellColors;
-  case FKind of
-    ackUser: FBannerIcon.SetIcon('user', 32, clAccent);
-    ackComputer: FBannerIcon.SetIcon('device-desktop', 32, clAccent);
-    ackOrgUnit: FBannerIcon.SetIcon('folder', 32, clAccent);
-  else
-    FBannerIcon.SetIcon('users', 32, clAccent);
-  end;
+  FWizard.RefreshTheme;
   if FScopeNote <> nil then FScopeNote.Font.Color := DialogStateColor(usMuted);
-  FStepper.Height := FStepper.PreferredHeight;
   sz := FontTextHeight(Font) + 12;
   if FScope <> nil then
   begin
@@ -506,20 +463,16 @@ begin
   UpdateState;
 end;
 
-procedure TAdCreateDialog.ShowPage(AIndex: Integer);
-var
-  pages: Integer;
+function TAdCreateDialog.GetPage: Integer;
 begin
-  FPage := AIndex;
-  FPages[0].Visible := AIndex = 0;
-  FPages[1].Visible := AIndex = 1;
-  if FKind = ackUser then pages := 2 else pages := 1;
-  FBack.Visible := pages > 1;
-  FStepper.Current := AIndex;
-  UpdateState;
+  Result := FWizard.PageIndex;
+end;
+
+procedure TAdCreateDialog.PageShown(Sender: TObject);
+begin
   if not Showing then Exit;
   case FKind of
-    ackUser: if AIndex = 0 then FFirst.SetFocus else FPwd1.SetFocus;
+    ackUser: if Page = 0 then FFirst.SetFocus else FPwd1.SetFocus;
   else
     FName.SetFocus;
   end;
@@ -579,8 +532,8 @@ begin
   Result.LogonName := FLogon.Text;
   Result.UpnSuffix := Copy(FSuffix.Text, 2, MaxInt);
   Result.SamName := FSam.Text;
-  Result.Password := RawByteString(FPwd1.Text);
-  Result.Confirm := RawByteString(FPwd2.Text);
+  FPwd1.GetSecret(Result.Password);
+  FPwd2.GetSecret(Result.Confirm);
   Result.MustChange := FMustChange.Checked;
   Result.NeverExpires := FNeverExpires.Checked;
   Result.Disabled := FDisabled.Checked;
@@ -626,7 +579,7 @@ begin
       begin
         u := UserInput;
         try
-          if FPage = 0 then
+          if Page = 0 then
           begin
             u.Password := 'x';
             u.Confirm := 'x';
@@ -668,12 +621,17 @@ begin
 end;
 
 procedure TAdCreateDialog.UpdateState;
+begin
+  FWizard.UpdateButtons;
+end;
+
+procedure TAdCreateDialog.WizardButtons(Sender: TObject; var AButtons: TRtWizardButtons);
 var
   c: TDirectoryConnection;
   p: string;
   busy: Boolean;
+  i: Integer;
 begin
-  if FNext = nil then Exit;
   c := Conn;
   busy := (FState in [acsSending, acsChecking]) or
     ((FProtectJob <> nil) and (FProtectJob.Outcome = poRunning));
@@ -687,60 +645,48 @@ begin
   if FNetbiosLabel <> nil then FNetbiosLabel.Caption := FNetbios + '\';
   // Champs geles des qu'une ecriture est partie. Une saisie valide ne dit rien de l'issue
   // d'une operation, et ne reactive jamais l'envoi.
-  FPages[0].Enabled := FState = acsEditing;
-  FPages[1].Enabled := FState = acsEditing;
-  FBack.Enabled := (FPage > 0) and (FState = acsEditing);
-  if FSubmitted then FCancel.Caption := rsClose;
+  for i := 0 to FWizard.PageCount - 1 do
+    FWizard.Pages[i].Enabled := FState = acsEditing;
+  AButtons.BackEnabled := AButtons.BackEnabled and (FState = acsEditing);
+  if FSubmitted then FWizard.CloseButton.Caption := rsClose;
   FEditAgain.Visible := FState = acsUnknown;
-  if FState = acsUnknown then FNext.Caption := rsAcCheck
-  else if (FKind = ackUser) and (FPage = 0) then FNext.Caption := rsAcNext
-  else FNext.Caption := rsAcCreate;
+  if FState = acsUnknown then AButtons.NextCaption := rsAcCheck;
   if busy or (FState = acsCreated) then
   begin
-    FNext.Enabled := False;
+    AButtons.NextEnabled := False;
     Exit;
   end;
   if FState = acsUnknown then
   begin
-    FNext.Enabled := c <> nil;
+    AButtons.NextEnabled := c <> nil;
     Exit;
   end;
   if c = nil then
   begin
     SetStatus(rsTdNotConnected, usError);
-    FNext.Enabled := False;
+    AButtons.NextEnabled := False;
     Exit;
   end;
   if c.Profile.ReadOnly then
   begin
     SetStatus(rsAcReadOnly, usWarning);
-    FNext.Enabled := False;
+    AButtons.NextEnabled := False;
     Exit;
   end;
   if FNotAllowed <> '' then
   begin
-    FNext.Enabled := False;
+    AButtons.NextEnabled := False;
     SetStatus('', usMuted);
     Exit;
   end;
   p := Problem;
-  if (p = '') and NeedsEncryption and ((FKind <> ackUser) or (FPage = 1)) and
+  if (p = '') and NeedsEncryption and ((FKind <> ackUser) or (Page = 1)) and
      not c.SecretsSafe then
     p := rsAcNeedsTls;
-  FNext.Enabled := p = '';
+  AButtons.NextEnabled := p = '';
   if FOpNote then Exit;
   if (FStatus.Font.Color <> DialogStateColor(usError)) or (p <> '') then
     SetStatus(p, usMuted);
-end;
-
-procedure TAdCreateDialog.NextClick(Sender: TObject);
-begin
-  GoNext;
-end;
-
-procedure TAdCreateDialog.BackClick(Sender: TObject);
-begin
-  if FPage > 0 then ShowPage(FPage - 1);
 end;
 
 procedure TAdCreateDialog.EditAgainClick(Sender: TObject);
@@ -761,17 +707,17 @@ end;
 
 procedure TAdCreateDialog.GoNext;
 begin
-  UpdateState;
-  if not FNext.Enabled then Exit;
+  FWizard.GoNext;
+end;
+
+procedure TAdCreateDialog.LastPageNext(Sender: TObject);
+begin
   // Issue inconnue: le meme bouton verifie le DN, jamais un nouvel Add.
   if FState = acsUnknown then
   begin
     SetStatus(Format(rsAcChecking, [FPendingDn]), usMuted);
     StartCheck;
-    Exit;
-  end;
-  if (FKind = ackUser) and (FPage = 0) then
-    ShowPage(1)
+  end
   else
     Submit;
 end;
@@ -1172,12 +1118,12 @@ end;
 
 function TAdCreateDialog.NextEnabled: Boolean;
 begin
-  Result := FNext.Enabled;
+  Result := FWizard.NextButton.Enabled;
 end;
 
 function TAdCreateDialog.NextCaption: string;
 begin
-  Result := FNext.Caption;
+  Result := FWizard.NextButton.Caption;
 end;
 
 function TAdCreateDialog.SuffixesText: string;

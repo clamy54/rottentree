@@ -11,7 +11,7 @@ interface
 
 const
   RT_APP_NAME = 'Rottentree';
-  RT_VERSION = '1.0';
+  RT_VERSION = '1.1';
   RT_SLOGAN = 'A rotten approach to directory administration.';
   RT_LICENSE = 'GPL-3.0-or-later';
   RT_COPYRIGHT = 'Copyright (C) 2023-2026 Cyril LAMY';

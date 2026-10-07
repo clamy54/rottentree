@@ -43,6 +43,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Cache de l'installeur Lazarus
         uses: actions/cache@v4
         with:
@@ -78,6 +80,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Cache des paquets FPC et des sources Lazarus
         uses: actions/cache@v4
         with:
@@ -109,6 +113,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Cache des installeurs FPC et Lazarus
         uses: actions/cache@v4
         with:

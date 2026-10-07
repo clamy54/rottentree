@@ -14,7 +14,7 @@ uses
   Classes, SysUtils, Contnrs, Controls, ComCtrls, ExtCtrls, StdCtrls, Forms, Graphics, Dialogs,
   SynEdit, SynEditTypes, SynGutterBase, SynGutter, SynEditMiscClasses, uAppContext, uRtCombo,
   uRtList, uConnections, uUiInbox, uDirectoryWorker, uLdif, uChangeSet, uLdifHighlighter, uRtCheck,
-  uLdifTargetCheck, uLdifAdvice, uIcons, uTaskTracker;
+  uLdifTargetCheck, uLdifAdvice, uIcons, uTaskTracker, uUiKit;
 
 resourcestring
   rsLdifTitle = 'LDIF';
@@ -96,12 +96,6 @@ type
     procedure CreateWnd; override;
   end;
 
-  // Meme punition pour la zone d'explication defilante.
-  TThemedScrollBox = class(TScrollBox)
-  protected
-    procedure CreateWnd; override;
-  end;
-
   TLdifTab = class(TTabSheet)
   private
     FCtx: TAppContext;
@@ -119,7 +113,7 @@ type
     FPages: TPageControl;
     FProblemList: TRtListGrid;
     FProbTitle, FProbWhyHead, FProbWhy, FProbFixHead, FProbFix, FProbExampleHead: TLabel;
-    FProbScroll: TThemedScrollBox;
+    FProbScroll: TRtScrollBox;
     FProbContent: TPanel;
     FProbExampleBox: TPanel;
     FProbExample: TLabel;
@@ -220,7 +214,7 @@ type
 implementation
 
 uses
-  uTheme, uUiKit, uChangePreview, uLdapErrors, uSafeSave, uRtMessage, uServerKind,
+  uTheme, uChangePreview, uLdapErrors, uSafeSave, uRtMessage, uServerKind,
   uConnectionProfile, uTaskDialog;
 
 const
@@ -238,12 +232,6 @@ const
   VERDICT_ICON = 24;
 
 procedure TLdifSynEdit.CreateWnd;
-begin
-  inherited CreateWnd;
-  ApplyNativeDarkMode(Self);
-end;
-
-procedure TThemedScrollBox.CreateWnd;
 begin
   inherited CreateWnd;
   ApplyNativeDarkMode(Self);
@@ -357,13 +345,11 @@ begin
   FFixAllBtn.Visible := False;
   txt := MakePanel(head, alClient, 0);
   txt.AutoSize := True;
-  FVerdict := MakeLabel(txt, '', alTop);
+  FVerdict := MakeDataLabel(txt, '', alTop);
   FVerdict.Font.Style := [fsBold];
   FVerdict.WordWrap := True;
-  FVerdict.ShowAccelChar := False;
-  FStatus := MakeLabel(txt, '', alTop);
+  FStatus := MakeDataLabel(txt, '', alTop);
   FStatus.WordWrap := True;
-  FStatus.ShowAccelChar := False;
   FPages := MakePages(bottom);
   BuildProblemsPage(AddPageBody(FPages, Format(rsLdifTabProblems, [0])));
   body := AddPageBody(FPages, Format(rsLdifTabOperations, [0]));
@@ -425,32 +411,21 @@ begin
   buttons := MakePanel(right, alBottom, 36);
   FShowLineBtn := MakeButton(buttons, rsLdifShowLine, @ShowLineClick);
   FFixBtn := MakeButton(buttons, '', @FixClick);
-  FProbScroll := TThemedScrollBox.Create(right);
-  FProbScroll.Parent := right;
-  FProbScroll.Align := alClient;
-  FProbScroll.BorderStyle := bsNone;
-  FProbScroll.HorzScrollBar.Visible := False;
-  FProbScroll.VertScrollBar.Tracking := True;
-  FProbScroll.AutoScroll := True;
-  FProbContent := MakePanel(FProbScroll, alTop, 0);
-  FProbContent.AutoSize := True;
+  FProbScroll := MakeScrollArea(right, FProbContent);
   FProbContent.BorderSpacing.Right := 6;
-  FProbTitle := MakeLabel(FProbContent, '', alTop);
+  FProbTitle := MakeDataLabel(FProbContent, '', alTop);
   FProbTitle.Font.Style := [fsBold];
   FProbTitle.WordWrap := True;
-  FProbTitle.ShowAccelChar := False;
   FProbWhyHead := MakeLabel(FProbContent, rsLdifWhy, alTop);
   FProbWhyHead.Font.Style := [fsBold];
   FProbWhyHead.BorderSpacing.Top := 8;
-  FProbWhy := MakeLabel(FProbContent, '', alTop);
+  FProbWhy := MakeDataLabel(FProbContent, '', alTop);
   FProbWhy.WordWrap := True;
-  FProbWhy.ShowAccelChar := False;
   FProbFixHead := MakeLabel(FProbContent, rsLdifHowToFix, alTop);
   FProbFixHead.Font.Style := [fsBold];
   FProbFixHead.BorderSpacing.Top := 8;
-  FProbFix := MakeLabel(FProbContent, '', alTop);
+  FProbFix := MakeDataLabel(FProbContent, '', alTop);
   FProbFix.WordWrap := True;
-  FProbFix.ShowAccelChar := False;
   FProbExampleHead := MakeLabel(FProbContent, rsLdifExample, alTop);
   FProbExampleHead.Font.Style := [fsBold];
   FProbExampleHead.BorderSpacing.Top := 8;
@@ -459,36 +434,14 @@ begin
   FProbExampleBox.ParentColor := False;
   FProbExampleBox.BorderSpacing.Top := 4;
   FProbExampleBox.BorderSpacing.Bottom := 6;
-  FProbExample := MakeLabel(FProbExampleBox, '', alTop);
+  FProbExample := MakeDataLabel(FProbExampleBox, '', alTop);
   FProbExample.WordWrap := True;
-  FProbExample.ShowAccelChar := False;
   FProbExample.BorderSpacing.Around := 8;
 end;
 
-// Ordre des sections force: un controle alTop re-affiche va sinon se ranger en bas de la pile.
 procedure TLdifTab.RestackProblem;
-var
-  ctrls: array[0..6] of TControl;
-  i, y: Integer;
 begin
-  ctrls[0] := FProbTitle;
-  ctrls[1] := FProbWhyHead;
-  ctrls[2] := FProbWhy;
-  ctrls[3] := FProbFixHead;
-  ctrls[4] := FProbFix;
-  ctrls[5] := FProbExampleHead;
-  ctrls[6] := FProbExampleBox;
-  FProbContent.DisableAlign;
-  try
-    y := 0;
-    for i := 0 to High(ctrls) do
-    begin
-      ctrls[i].Top := y;
-      Inc(y, ctrls[i].Height + 20);
-    end;
-  finally
-    FProbContent.EnableAlign;
-  end;
+  StackByCreation(FProbContent);
   FProbScroll.VertScrollBar.Position := 0;
 end;
 
@@ -526,8 +479,6 @@ begin
   ApplyNativeDarkMode(FEditor);
   FPlan.RefreshMetrics;
   FProblemList.RefreshMetrics;
-  FProbScroll.Color := clAppBg;
-  ApplyNativeDarkMode(FProbScroll);
   FProbExampleBox.Color := BlendColor(clEditorFg, clEditorBg, 8);
   FProbExample.Font.Color := clEditorFg;
   if RSEditorFontName <> '' then FProbExample.Font.Name := RSEditorFontName;

@@ -124,23 +124,16 @@ end;
 
 constructor TLdifExportDialog.CreateExport(AOwner: TComponent; ACtx: TAppContext;
   const AProfileUuid: string; AEntry: TLdapEntry);
-var
-  row: TPanel;
-  lbl: TLabel;
 begin
   inherited CreateFor(AOwner, ACtx, AProfileUuid, rsLxTitle, 760, 270);
   SetIcon('file-export');
   FEntry := AEntry.Clone;
   FAutoAnswer := mrNone;
   FMaxEntries := EXPORT_MAX_ENTRIES;
-  lbl := MakeLabel(Body, Format(rsLxEntry, [FEntry.Dn]));
-  lbl.ShowAccelChar := False;
-  row := MakeFieldRow(Body, rsLxFile, 150);
-  FFile := TEdit.Create(row);
-  FFile.Parent := row;
-  FFile.Align := alClient;
+  MakeDataLabel(Body, Format(rsLxEntry, [FEntry.Dn]));
+  FFile := MakeEditRow(Body, rsLxFile);
   FFile.Text := DefaultDir + SuggestedName(FEntry.Dn);
-  FBrowseBtn := MakeButton(row, rsLxBrowse, @BrowseClick, alRight);
+  FBrowseBtn := MakeButton(FFile.Parent, rsLxBrowse, @BrowseClick, alRight);
   FChildren := MakeCheck(Body, rsLxChildren);
   FChildren.Checked := GIncludeChildren;
   FExclude := MakeCheck(Body, rsLxExclude);

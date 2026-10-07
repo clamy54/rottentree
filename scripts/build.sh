@@ -38,6 +38,10 @@ if [ -z "${LAZBUILD:-}" ]; then
 fi
 [ -n "$LAZBUILD" ] && [ -x "$LAZBUILD" ] || die "lazbuild introuvable (variable LAZBUILD)"
 
+# sous-module: un clone sans --recurse-submodules le laisse vide, et lazbuild
+# le dit a sa facon, c'est-a-dire mal
+[ -f "$ROOT/rottenui/rottenui.lpk" ] || die "rottenui/ est vide: git submodule update --init"
+
 python3 "$ROOT/scripts/gen_lpi.py" --check
 python3 "$ROOT/rottenui/tools/gen_res.py" --check
 

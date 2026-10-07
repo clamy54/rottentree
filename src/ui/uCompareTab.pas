@@ -192,42 +192,27 @@ begin
   end;
 end;
 
+const
+  LABEL_W = 190;
+
 function Row(AParent: TWinControl; const ACaption: string): TPanel;
 begin
-  Result := MakeFieldRow(AParent, ACaption, 190);
+  Result := MakeFieldRow(AParent, ACaption, LABEL_W);
 end;
 
 function RowEdit(AParent: TWinControl; const ACaption: string): TEdit;
-var
-  r: TPanel;
 begin
-  r := Row(AParent, ACaption);
-  Result := TEdit.Create(r);
-  Result.Parent := r;
-  Result.Align := alClient;
-  Result.BorderSpacing.Around := 2;
+  Result := MakeEditRow(AParent, ACaption, LABEL_W);
 end;
 
 function RowCombo(AParent: TWinControl; const ACaption: string; const AItems: array of string): TRtComboBox;
-var
-  r: TPanel;
-  i: Integer;
 begin
-  r := Row(AParent, ACaption);
-  Result := TRtComboBox.Create(r);
-  Result.Parent := r;
-  Result.Align := alClient;
-  Result.Style := csDropDownList;
-  Result.BorderSpacing.Around := 2;
-  for i := 0 to High(AItems) do
-    Result.Items.Add(AItems[i]);
-  if Result.Items.Count > 0 then Result.ItemIndex := 0;
+  Result := MakeComboRow(AParent, ACaption, AItems, LABEL_W);
 end;
 
 procedure TCompareTab.BuildUi;
 var
   pLeft, bar, savedRow, pRight, pTop: TPanel;
-  scroll: TScrollBox;
   content: TPanel;
   splitter: TSplitter;
   ts: TTabSheet;
@@ -241,21 +226,7 @@ begin
   FStopBtn.Enabled := False;
   FExportBtn := MakeButton(bar, rsCmpExport, @ExportClick);
   FExportBtn.Enabled := False;
-  scroll := TScrollBox.Create(pLeft);
-  scroll.Parent := pLeft;
-  scroll.Align := alClient;
-  scroll.HorzScrollBar.Visible := False;
-  scroll.VertScrollBar.Tracking := True;
-  scroll.BorderStyle := bsNone;
-  // Un seul enfant a hauteur automatique, la boite ne fait que defiler. Des dizaines de lignes posees
-  // directement dedans faisaient boucler Cocoa (InvalidatePreferredSize loop detected), qui recalculait
-  // la plage de defilement jusqu'a la fin des temps.
-  content := TPanel.Create(scroll);
-  content.Parent := scroll;
-  content.Align := alTop;
-  content.BevelOuter := bvNone;
-  content.Caption := '';
-  content.AutoSize := True;
+  MakeScrollArea(pLeft, content);
 
   savedRow := Row(content, rsCmpSaved);
   FSaved := TRtComboBox.Create(savedRow);

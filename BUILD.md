@@ -5,8 +5,11 @@ everywhere; what differs is which Lazarus you need, where the native
 libraries come from, and how creatively each operating system makes that
 difficult.
 
-Everything below assumes you cloned the repository and are sitting in its
-root. It also assumes you want to build this rather than download it, which is
+Everything below assumes you cloned the repository **with its submodule**
+(`git clone --recurse-submodules`, or `git submodule update --init` for those
+who read the manual afterwards) and are sitting in its root. The interface kit,
+[RottenUI](https://github.com/clamy54/rottenUI), lives in `rottenui/`; without
+it the build scripts stop at the first line and say why. It also assumes you want to build this rather than download it, which is
 a choice, and one you are about to have several opportunities to reconsider.
 
 ## Common requirements
@@ -147,8 +150,8 @@ sources:
 | a unit added to or removed from `src/` | `python scripts/gen_lpi.py` |
 | a license text in `licenses/` | `python scripts/gen_lpi.py` |
 | `icons/icon.png` | `python scripts/gen_app_icon.py` (needs Pillow) |
-| RottenUI icons | `python rottenui/tools/gen_icons.py` (needs resvg-py; `--download` for a new icon) |
-| RottenUI fonts or themes | `python rottenui/tools/gen_res.py` |
+| RottenUI icons | `python rottenui/tools/gen_icons.py` (needs resvg-py; `--download` for a new icon), then commit **in the RottenUI repository** and move the submodule |
+| RottenUI fonts or themes | `python rottenui/tools/gen_res.py`, same destination |
 
 ## Signing (there is none)
 

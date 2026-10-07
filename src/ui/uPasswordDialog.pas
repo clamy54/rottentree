@@ -104,7 +104,7 @@ uses
   uTheme, uUiKit, uPwdCore, uPasswordSchemes, uUiInbox, uDirectoryWorker, uLdapErrors, uChangeSet,
   uConnectionProfile, uCancel, uRtBytes, uSearchModel, uPasswordWork,
   uAccountState, uRtCombo, uServerKind, uPasswordEntryState, uDirectoryService, uRtList, uRtMessage,
-  uTaskTracker, uTaskDialog;
+  uTaskTracker, uTaskDialog, uRtSecretEdit;
 
 resourcestring
   rsPwdSessionLost = 'The connection changed while the server was being consulted: the outcome is ' +
@@ -121,9 +121,9 @@ type
     FEntryWritten: Boolean;
     FPages: TPageControl;
     FVerifyPage, FSetPage, FModifyPage, FAdPage: TTabSheet;
-    FVerifyEdit, FGenEdit, FGenConfirm, FGenValue, FModOld, FModNew, FModConfirm,
-      FModGenerated: TEdit;
-    FAdNew, FAdOld: TEdit;
+    FVerifyEdit, FGenEdit, FGenConfirm, FModOld, FModNew, FModConfirm, FAdNew,
+      FAdOld: TRtSecretEdit;
+    FGenValue, FModGenerated: TEdit;
     FVerifyResult, FGenResult, FModResult, FAdResult, FGenNote, FTestIntro,
       FCannotChange: TLabel;
     FModGenRow: TPanel;
@@ -156,7 +156,7 @@ type
     procedure ClipTimer(Sender: TObject);
     procedure LocalMessage(AMsg: TUiMessage);
     procedure TaskMessage(AMsg: TUiMessage; const ATask: TTrackedTask; AEnding: TTaskEnding);
-    function PasswordEdit(AParent: TWinControl; const ACaption: string): TEdit;
+    function PasswordEdit(AParent: TWinControl; const ACaption: string): TRtSecretEdit;
     function ValueRow(AParent: TWinControl; const ACaption: string; AOnCopy: TNotifyEvent;
       out AEdit: TEdit): TPanel;
     procedure SetState(ALabel: TLabel; AState: TUiState; const AText: string);
@@ -181,6 +181,7 @@ begin
     Result := HexEncode(AValue);
 end;
 
+// Champs de valeur calculee, en clair et en lecture seule: les champs de saisie s'effacent seuls.
 procedure WipeEdit(AEdit: TEdit);
 begin
   if AEdit = nil then Exit;
@@ -280,16 +281,9 @@ begin
   inherited Destroy;
 end;
 
-function TPasswordTools.PasswordEdit(AParent: TWinControl; const ACaption: string): TEdit;
-var
-  row: TPanel;
+function TPasswordTools.PasswordEdit(AParent: TWinControl; const ACaption: string): TRtSecretEdit;
 begin
-  row := MakeFieldRow(AParent, ACaption, 160);
-  Result := TEdit.Create(row);
-  Result.Parent := row;
-  Result.Align := alClient;
-  Result.PasswordChar := '*';
-  Result.BorderSpacing.Around := 3;
+  Result := MakeSecretRow(AParent, ACaption, 160);
 end;
 
 function TPasswordTools.ValueRow(AParent: TWinControl; const ACaption: string;
@@ -487,8 +481,8 @@ begin
     Exit;
   end;
   FVerifyVersion := FState.Version;
-  pw := FVerifyEdit.Text;
-  WipeEdit(FVerifyEdit);
+  FVerifyEdit.GetSecret(pw);
+  FVerifyEdit.Wipe;
   FVerifyTask := NextTaskId;
   if not PasswordWork.StartVerify(values, pw, Self, FVerifyTask) then
   begin
@@ -561,8 +555,8 @@ begin
   // Un test a la fois: un clic de plus ne fait pas taire le resultat du test en vol, et ne lance
   // pas une rafale de binds.
   if FTestTask <> 0 then Exit;
-  pw := FVerifyEdit.Text;
-  WipeEdit(FVerifyEdit);
+  FVerifyEdit.GetSecret(pw);
+  FVerifyEdit.Wipe;
   if pw = '' then Exit;
   FTestTask := NextTaskId;
   // Connexion independante: aucun rebind sur la connexion de navigation, qui changerait
@@ -594,20 +588,20 @@ var
 begin
   Result := False;
   if FGenTask <> 0 then Exit;
-  if FGenEdit.Text = '' then
+  if FGenEdit.IsEmpty then
   begin
     SetState(FGenResult, usWarning, rsPwdEmpty);
     Exit;
   end;
-  if FGenEdit.Text <> FGenConfirm.Text then
+  if not FGenEdit.SameAs(FGenConfirm) then
   begin
     SetState(FGenResult, usError, rsPwdMismatch);
     Exit;
   end;
   if PasswordRegistry.FindById(FScheme.Text) = nil then Exit;
-  pw := FGenEdit.Text;
-  WipeEdit(FGenEdit);
-  WipeEdit(FGenConfirm);
+  FGenEdit.GetSecret(pw);
+  FGenEdit.Wipe;
+  FGenConfirm.Wipe;
   WipeString(FGenerated);
   WipeEdit(FGenValue);
   FGenTask := NextTaskId;
@@ -754,16 +748,16 @@ begin
     SetState(FModResult, usError, rsPwdEncryptedOnly);
     Exit;
   end;
-  if FModNew.Text <> FModConfirm.Text then
+  if not FModNew.SameAs(FModConfirm) then
   begin
     SetState(FModResult, usError, rsPwdMismatch);
     Exit;
   end;
-  oldPw := FModOld.Text;
-  newPw := FModNew.Text;
-  WipeEdit(FModOld);
-  WipeEdit(FModNew);
-  WipeEdit(FModConfirm);
+  FModOld.GetSecret(oldPw);
+  FModNew.GetSecret(newPw);
+  FModOld.Wipe;
+  FModNew.Wipe;
+  FModConfirm.Wipe;
   try
     if Tasks.PasswordModify('mod', FState.Dn, oldPw, newPw, not FModReset.Checked, newPw <> '',
          err) = 0 then
@@ -812,10 +806,10 @@ begin
       SetState(FAdResult, usError, 'userAccountControl was not read: reload the entry first.');
     Exit;
   end;
-  newPw := FAdNew.Text;
-  oldPw := FAdOld.Text;
-  WipeEdit(FAdNew);
-  WipeEdit(FAdOld);
+  FAdNew.GetSecret(newPw);
+  FAdOld.GetSecret(oldPw);
+  FAdNew.Wipe;
+  FAdOld.Wipe;
   handed := False;
   change := NewChange(ckModify, FState.Dn);
   try

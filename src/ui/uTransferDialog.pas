@@ -166,7 +166,6 @@ end;
 
 procedure TTransferDialog.BuildUi;
 var
-  row: TPanel;
   i: Integer;
   c, src: TDirectoryConnection;
   d: TLdapDn;
@@ -174,12 +173,7 @@ begin
   src := Conn;
   if src <> nil then
     MakeLabel(Body, Format(rsTrSource, [FSourceDn, src.Profile.Name]));
-  row := MakeFieldRow(Body, rsTrTargetProfile, 200);
-  FTargetCombo := TRtComboBox.Create(row);
-  FTargetCombo.Parent := row;
-  FTargetCombo.Align := alClient;
-  FTargetCombo.Style := csDropDownList;
-  FTargetCombo.BorderSpacing.Around := 3;
+  FTargetCombo := MakeComboRow(Body, rsTrTargetProfile, [], 200);
   for i := 0 to FCtx.Connections.Count - 1 do
   begin
     c := FCtx.Connections.Item(i);
@@ -192,16 +186,8 @@ begin
   end;
   if (FTargetCombo.ItemIndex < 0) and (FTargetCombo.Items.Count > 0) then
     FTargetCombo.ItemIndex := 0;
-  row := MakeFieldRow(Body, rsTrParent, 200);
-  FParent := TEdit.Create(row);
-  FParent.Parent := row;
-  FParent.Align := alClient;
-  FParent.BorderSpacing.Around := 3;
-  row := MakeFieldRow(Body, rsTrRdn, 200);
-  FRdn := TEdit.Create(row);
-  FRdn.Parent := row;
-  FRdn.Align := alClient;
-  FRdn.BorderSpacing.Around := 3;
+  FParent := MakeEditRow(Body, rsTrParent, 200);
+  FRdn := MakeEditRow(Body, rsTrRdn, 200);
   if DnTryParse(FSourceDn, d) and (DnRdnCount(d) > 0) then
   begin
     FParent.Text := DnToString(DnParent(d));

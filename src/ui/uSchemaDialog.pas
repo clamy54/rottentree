@@ -231,7 +231,7 @@ end;
 constructor TSchemaBrowser.CreateFor(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid: string);
 var
   c: TDirectoryConnection;
-  row, bar, listPanel: TPanel;
+  bar, listPanel: TPanel;
   adapter: string;
 begin
   inherited CreateDialog(AOwner, rsSchemaTitle, 1000, 680);
@@ -252,8 +252,7 @@ begin
   end;
   FStatus := MakeLabel(Body, Format(rsSchemaAdapter, [adapter, FCaps.Reason[soCreate]]));
   FStatus.WordWrap := True;
-  row := MakeFieldRow(Body, rsSchemaFilter, 160);
-  FFilter := MakeEdit(row, alClient);
+  FFilter := MakeEditRow(Body, rsSchemaFilter, 160);
   FFilter.OnChange := @FilterChange;
   bar := MakePanel(Body, alTop, 38);
   FNewAttr := MakeButton(bar, rsSchemaNewAttr, @NewAttrClick);
@@ -755,24 +754,14 @@ type
   end;
 
 function AdField(AForm: TAdSchemaForm; const ACaption, AValue: string): TEdit;
-var
-  row: TPanel;
 begin
-  row := MakeFieldRow(AForm.Body, ACaption, 220);
-  Result := MakeEdit(row, alClient);
+  Result := MakeEditRow(AForm.Body, ACaption, 220);
   Result.Text := AValue;
 end;
 
 function AdCombo(AForm: TAdSchemaForm; const ACaption: string): TRtComboBox;
-var
-  row: TPanel;
 begin
-  row := MakeFieldRow(AForm.Body, ACaption, 220);
-  Result := TRtComboBox.Create(row);
-  Result.Parent := row;
-  Result.Align := alClient;
-  Result.Style := csDropDownList;
-  Result.BorderSpacing.Around := 3;
+  Result := MakeComboRow(AForm.Body, ACaption, [], 220);
 end;
 
 function AdToPlan(var AAd: TAdSchemaPlan; AOp: TSchemaOp; AKind: TDefinitionKind;
@@ -1108,18 +1097,14 @@ begin
 end;
 
 function TSchemaEditForm.Field(const ACaption: string; const AValue: string): TEdit;
-var
-  row: TPanel;
 begin
-  row := MakeFieldRow(Body, ACaption, 220);
-  Result := MakeEdit(row, alClient);
+  Result := MakeEditRow(Body, ACaption, 220);
   Result.Text := AValue;
 end;
 
 constructor TSchemaEditForm.CreateFor(AOwner: TComponent; AKind: TDefinitionKind;
   AOriginal: TSchemaDefinition; AShowTarget: Boolean; const ADefaultTarget: string);
 var
-  row: TPanel;
   kindName: string;
   ok: TButton;
 begin
@@ -1173,17 +1158,8 @@ begin
     FSingle := MakeCheck(Body, rsSchemaSingle);
     FCollective := MakeCheck(Body, rsSchemaCollective);
     FNoUserMod := MakeCheck(Body, rsSchemaNoUserMod);
-    row := MakeFieldRow(Body, rsSchemaFieldUsage, 220);
-    FUsage := TRtComboBox.Create(row);
-    FUsage.Parent := row;
-    FUsage.Align := alClient;
-    FUsage.Style := csDropDownList;
-    FUsage.BorderSpacing.Around := 3;
-    FUsage.Items.Add('userApplications');
-    FUsage.Items.Add('directoryOperation');
-    FUsage.Items.Add('distributedOperation');
-    FUsage.Items.Add('dSAOperation');
-    FUsage.ItemIndex := 0;
+    FUsage := MakeComboRow(Body, rsSchemaFieldUsage, ['userApplications', 'directoryOperation',
+      'distributedOperation', 'dSAOperation'], 220);
     if AOriginal <> nil then
     begin
       FSingle.Checked := AOriginal.Has('SINGLE-VALUE');
@@ -1197,15 +1173,7 @@ begin
   end
   else
   begin
-    row := MakeFieldRow(Body, rsSchemaFieldKind, 220);
-    FClassKind := TRtComboBox.Create(row);
-    FClassKind.Parent := row;
-    FClassKind.Align := alClient;
-    FClassKind.Style := csDropDownList;
-    FClassKind.BorderSpacing.Around := 3;
-    FClassKind.Items.Add('STRUCTURAL');
-    FClassKind.Items.Add('AUXILIARY');
-    FClassKind.Items.Add('ABSTRACT');
+    FClassKind := MakeComboRow(Body, rsSchemaFieldKind, ['STRUCTURAL', 'AUXILIARY', 'ABSTRACT'], 220);
     FClassKind.ItemIndex := 1;
     if AOriginal = nil then
     begin

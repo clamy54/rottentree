@@ -66,29 +66,19 @@ begin
 end;
 
 function ReadOnlyEdit(AParent: TWinControl; const ACaption: string): TEdit;
-var
-  row: TPanel;
 begin
-  row := MakeFieldRow(AParent, ACaption, 240);
-  Result := TEdit.Create(row);
-  Result.Parent := row;
-  Result.Align := alClient;
+  Result := MakeEditRow(AParent, ACaption, 240);
   Result.ReadOnly := True;
-  Result.BorderSpacing.Around := 3;
 end;
 
 procedure ShowEscapeTool(AOwner: TComponent);
 var
   d: TEscapeTool;
-  row: TPanel;
 begin
   d := TEscapeTool.CreateDialog(AOwner, rsEscTitle, 760, 420);
   d.SetIcon('terminal-2');
   try
-    row := MakeFieldRow(d.Body, rsEscInput, 240);
-    d.Input := TEdit.Create(row);
-    d.Input.Parent := row;
-    d.Input.Align := alClient;
+    d.Input := MakeEditRow(d.Body, rsEscInput, 240);
     d.Input.OnChange := @d.InputChange;
     d.DnOut := ReadOnlyEdit(d.Body, rsEscDn);
     d.FilterOut := ReadOnlyEdit(d.Body, rsEscFilter);
@@ -171,40 +161,18 @@ begin
   if Visible then FitHeightToContent;
 end;
 
-function SpinRow(AParent: TWinControl; const ACaption: string; AMin, AMax, AValue: Integer): TSpinEdit;
-var
-  row: TPanel;
-begin
-  row := MakeFieldRow(AParent, ACaption, 200);
-  Result := TSpinEdit.Create(row);
-  Result.Parent := row;
-  Result.Align := alLeft;
-  Result.Width := 90;
-  Result.BorderSpacing.Around := 3;
-  Result.Constraints.MaxHeight := FontTextHeight(AParent.Font) + 12;
-  Result.MinValue := AMin;
-  Result.MaxValue := AMax;
-  Result.Value := AValue;
-end;
-
 function ShowPreferences(AOwner: TComponent): Boolean;
 var
   d: TPrefDialog;
   sensitive: TEdit;
   uiSize, edSize: TSpinEdit;
-  row: TPanel;
   lbl: TLabel;
   i: Integer;
 begin
   d := TPrefDialog.CreateDialog(AOwner, rsPrefTitle, 760, 640);
   d.SetIcon('settings');
   try
-    row := MakeFieldRow(d.Body, rsPrefTheme, 200);
-    d.Theme := TRtComboBox.Create(row);
-    d.Theme.Parent := row;
-    d.Theme.Align := alClient;
-    d.Theme.Style := csDropDownList;
-    d.Theme.BorderSpacing.Around := 3;
+    d.Theme := MakeComboRow(d.Body, rsPrefTheme, [], 200);
     for i := 0 to ThemeCount - 1 do
       d.Theme.Items.Add(ThemeName(i));
     d.Theme.ItemIndex := CurrentThemeIndex;
@@ -215,19 +183,15 @@ begin
     StackTop(d.Preview);
     d.Preview.Align := alTop;
     d.Preview.BorderSpacing.Around := 4;
-    uiSize := SpinRow(d.Body, rsPrefUiFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX,
-      ClampFontSize(PrefUiFontSize));
-    edSize := SpinRow(d.Body, rsPrefEditorFontSize, 0, FONT_SIZE_MAX, PrefEditorFontSize);
+    uiSize := MakeSpinRow(d.Body, rsPrefUiFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX,
+      ClampFontSize(PrefUiFontSize), 200);
+    edSize := MakeSpinRow(d.Body, rsPrefEditorFontSize, 0, FONT_SIZE_MAX, PrefEditorFontSize, 200);
     d.FLastEditorSize := PrefEditorFontSize;
     edSize.OnChange := @d.EditorSizeChange;
     lbl := MakeLabel(d.Body, rsPrefRestartFonts);
     lbl.Font.Color := DialogStateColor(usMuted);
     lbl.WordWrap := True;
-    row := MakeFieldRow(d.Body, rsPrefSensitive, 200);
-    sensitive := TEdit.Create(row);
-    sensitive.Parent := row;
-    sensitive.Align := alClient;
-    sensitive.BorderSpacing.Around := 3;
+    sensitive := MakeEditRow(d.Body, rsPrefSensitive, 200);
     sensitive.Text := PrefExtraSensitiveAttrs;
     lbl := MakeLabel(d.Body, rsPrefSensitiveHint);
     lbl.Font.Color := DialogStateColor(usMuted);

@@ -21,6 +21,11 @@ if ($busy) {
   exit 3
 }
 
+if (-not (Test-Path (Join-Path $root 'rottenui\rottenui.lpk'))) {
+  Write-Error 'rottenui\ est vide: git submodule update --init'
+  exit 3
+}
+
 # projet genere: une unite ou une ressource oubliee dans le .lpi est une
 # erreur; de meme une ressource de RottenUI (fontes, icones, themes) dont le
 # .res n'a pas ete reconstruit

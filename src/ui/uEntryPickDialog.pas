@@ -155,10 +155,9 @@ begin
   help := rsEpHelp;
   c := Conn;
   if (c <> nil) and (EffectiveServerKind(c.Profile, c.RootDse) = pkActiveDirectory) then help := rsEpHelpAd;
-  if FBase <> '' then lbl := MakeLabel(Body, Format(help, [FBase]))
-  else lbl := MakeLabel(Body, rsEpNoBase);
+  if FBase <> '' then lbl := MakeDataLabel(Body, Format(help, [FBase]))
+  else lbl := MakeDataLabel(Body, rsEpNoBase);
   lbl.WordWrap := True;
-  lbl.ShowAccelChar := False;
   lbl.BorderSpacing.Top := 4;
   FList := TRtListGrid.Create(Body);
   FList.Parent := Body;

@@ -158,7 +158,6 @@ end;
 
 procedure TAccountFlagsDialog.BuildUi;
 var
-  box: TScrollBox;
   content: TPanel;
   i: Integer;
   f: TUacFlag;
@@ -181,19 +180,7 @@ begin
   FCcNote.WordWrap := True;
   FCcPreview := MakeMemo(cc, alClient);
   FCcPreview.ReadOnly := True;
-  box := TScrollBox.Create(Body);
-  box.Parent := Body;
-  box.Align := alClient;
-  box.BorderStyle := bsNone;
-  box.HorzScrollBar.Visible := False;
-  // Un seul enfant a hauteur automatique dans la boite: des cases posees directement
-  // dedans faisaient boucler la mise en page sous Cocoa.
-  content := TPanel.Create(box);
-  content.Parent := box;
-  content.Align := alTop;
-  content.BevelOuter := bvNone;
-  content.Caption := '';
-  content.AutoSize := True;
+  MakeScrollArea(Body, content);
   SetLength(FChecks, UacFlagCount);
   SetLength(FBits, UacFlagCount);
   for i := 0 to UacFlagCount - 1 do

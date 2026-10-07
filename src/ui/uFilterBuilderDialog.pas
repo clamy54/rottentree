@@ -25,24 +25,6 @@ type
   TFbAction = (faAddCond, faAddInto, faAddGroupInto, faDelete, faNot, faToggleAndOr, faUp, faDown,
     faWrapAll, faWrapAny, faDuplicate, faUndo);
 
-  TFbSwitch = class(TCustomControl)
-  private
-    FIsOr: Boolean;
-    FOnToggle: TNotifyEvent;
-    procedure Toggle;
-  protected
-    procedure Paint; override;
-    procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
-    procedure KeyDown(var Key: Word; Shift: TShiftState); override;
-    procedure DoEnter; override;
-    procedure DoExit; override;
-  public
-    constructor Create(AOwner: TComponent); override;
-    function PreferredWidth: Integer;
-    property IsOr: Boolean read FIsOr write FIsOr;
-    property OnToggle: TNotifyEvent read FOnToggle write FOnToggle;
-  end;
-
   TFbRow = class(TCustomControl)
   private
     FDlg: TFilterBuilderDialog;
@@ -61,7 +43,7 @@ type
     FError: string;
     FErrorField: Integer;
     FTextLeft, FValueLeft, FLockLeft: Integer;
-    FSwitch: TFbSwitch;
+    FSwitch: TRtSegmented;
     FAttr, FValue, FRule: TEdit;
     FOp: TRtComboBox;
     FDnAttrs: TRtCheckBox;
@@ -118,7 +100,7 @@ type
     FRows: TFPList;
     FCurrent: TFbRow;
     FMetrics: TFbMetrics;
-    FScroll: TScrollBox;
+    FScroll: TRtScrollBox;
     FText: TMemo;
     FTextProblem: string;
     FUpdatingText, FUpdating, FClosing: Boolean;
@@ -399,107 +381,6 @@ begin
   end;
 end;
 
-constructor TFbSwitch.Create(AOwner: TComponent);
-begin
-  inherited Create(AOwner);
-  ControlStyle := ControlStyle + [csOpaque] - [csClickEvents, csDoubleClicks, csAcceptsControls];
-  TabStop := True;
-  Width := 100;
-  Height := 26;
-end;
-
-function TFbSwitch.PreferredWidth: Integer;
-begin
-  Result := 2 * (Max(MeasureText(Font, rsFbAll, [fsBold]), MeasureText(Font, rsFbAny, [fsBold])) + 22) + 4;
-end;
-
-procedure TFbSwitch.Toggle;
-begin
-  FIsOr := not FIsOr;
-  Invalidate;
-  if Assigned(FOnToggle) then FOnToggle(Self);
-end;
-
-procedure TFbSwitch.Paint;
-var
-  bg, c, txt: TColor;
-  r, seg: TRect;
-  half, i: Integer;
-  isOrSeg: Boolean;
-  cap: string;
-begin
-  if Parent <> nil then bg := Parent.Brush.Color else bg := clAppBg;
-  Canvas.Brush.Style := bsSolid;
-  Canvas.Brush.Color := bg;
-  Canvas.FillRect(ClientRect);
-  r := ClientRect;
-  Canvas.Brush.Color := BlendColor(clEditorBg, bg, 60);
-  if Focused then Canvas.Pen.Color := clAccent else Canvas.Pen.Color := BlendColor(clAppFg, bg, 28);
-  Canvas.Pen.Width := 1;
-  Canvas.RoundRect(r.Left, r.Top, r.Right, r.Bottom, 10, 10);
-  half := ClientWidth div 2;
-  Canvas.Font.Assign(Font);
-  Canvas.Font.Style := [fsBold];
-  for i := 0 to 1 do
-  begin
-    isOrSeg := i = 1;
-    if isOrSeg then
-    begin
-      seg := Rect(half, 2, ClientWidth - 2, ClientHeight - 2);
-      cap := rsFbAny;
-    end
-    else
-    begin
-      seg := Rect(2, 2, half, ClientHeight - 2);
-      cap := rsFbAll;
-    end;
-    if isOrSeg = FIsOr then
-    begin
-      if isOrSeg then c := FilterGroupColor(fkOr) else c := FilterGroupColor(fkAnd);
-      Canvas.Brush.Style := bsSolid;
-      Canvas.Brush.Color := c;
-      Canvas.Pen.Color := c;
-      Canvas.RoundRect(seg.Left, seg.Top, seg.Right, seg.Bottom, 8, 8);
-      txt := clAppBg;
-    end
-    else
-      txt := MutedColor(bg);
-    Canvas.Brush.Style := bsClear;
-    Canvas.Font.Color := txt;
-    Canvas.TextOut((seg.Left + seg.Right - Canvas.TextWidth(cap)) div 2,
-      (seg.Top + seg.Bottom - Canvas.TextHeight(cap)) div 2, cap);
-  end;
-end;
-
-procedure TFbSwitch.MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
-begin
-  inherited MouseDown(Button, Shift, X, Y);
-  if Button <> mbLeft then Exit;
-  if (X >= ClientWidth div 2) <> FIsOr then Toggle;
-end;
-
-procedure TFbSwitch.KeyDown(var Key: Word; Shift: TShiftState);
-begin
-  inherited KeyDown(Key, Shift);
-  if (Shift = []) and (Key in [VK_SPACE, VK_LEFT, VK_RIGHT]) then
-  begin
-    if (Key = VK_SPACE) or ((Key = VK_RIGHT) <> FIsOr) then Toggle;
-    Key := 0;
-  end;
-end;
-
-procedure TFbSwitch.DoEnter;
-begin
-  inherited DoEnter;
-  Invalidate;
-end;
-
-procedure TFbSwitch.DoExit;
-begin
-  inherited DoExit;
-  Invalidate;
-end;
-
 constructor TFbRow.CreateRow(AOwner: TWinControl; ADlg: TFilterBuilderDialog; AKind: TFbRowKind;
   ANode, AGroup: TFilterNode; ANegated: Boolean; ADepth: Integer; const ARails: TFbColors);
 begin
@@ -597,10 +478,10 @@ begin
       end;
     frkGroup:
       begin
-        FSwitch := TFbSwitch.Create(Self);
+        FSwitch := TRtSegmented.Create(Self);
         FSwitch.Parent := Self;
-        FSwitch.IsOr := FInner.Kind = fkOr;
-        FSwitch.OnToggle := @SwitchToggle;
+        FSwitch.SetChoices([rsFbAll, rsFbAny], Ord(FInner.Kind = fkOr));
+        FSwitch.OnChange := @SwitchToggle;
       end;
     frkNot:
       begin
@@ -669,6 +550,8 @@ begin
   else
     FBase := clAppBg;
   if FNegated then FBase := BlendColor(FilterGroupColor(fkNot), FBase, 10);
+  if FSwitch <> nil then
+    FSwitch.SetColors([FilterGroupColor(fkAnd), FilterGroupColor(fkOr)]);
   StyleNotChip;
   SetCurrentLook(FIsCurrent);
   if FMenuBtn <> nil then FMenuBtn.Ink := MutedColor(FBase);
@@ -1163,14 +1046,11 @@ begin
   FStatusIcon.Parent := statusRow;
   FStatusIcon.Align := alLeft;
   FStatusIcon.Width := 24;
-  FStatus := MakeLabel(statusRow, '', alClient);
+  FStatus := MakeDataLabel(statusRow, '', alClient);
   FStatus.Layout := tlCenter;
   FStatus.WordWrap := False;
-  // Le "&" des filtres n'est pas un raccourci clavier, quoi qu'en pense la LCL.
-  FStatus.ShowAccelChar := False;
-  FWords := MakeLabel(topPanel, '', alTop);
+  FWords := MakeDataLabel(topPanel, '', alTop);
   FWords.WordWrap := True;
-  FWords.ShowAccelChar := False;
 
   rulesHead := MakePanel(Body, alTop, 34);
   rulesHead.BorderSpacing.Top := 6;
@@ -1191,18 +1071,15 @@ begin
   FHelpIcon.Width := 24;
   FHelpIcon.TopAligned := True;
   FHelpIcon.BorderSpacing.Top := 4;
-  FHelp := MakeLabel(helpRow, '', alClient);
+  FHelp := MakeDataLabel(helpRow, '', alClient);
   FHelp.WordWrap := True;
-  FHelp.ShowAccelChar := False;
   FHelpRow := helpRow;
 
-  FScroll := TScrollBox.Create(Body);
+  FScroll := TRtScrollBox.Create(Body);
   FScroll.Parent := Body;
   FScroll.Align := alClient;
-  FScroll.BorderStyle := bsNone;
   FScroll.HorzScrollBar.Visible := False;
   FScroll.VertScrollBar.Tracking := True;
-  FScroll.ParentColor := False;
   FScroll.OnMouseWheel := @ScrollWheel;
 
   FSuggestBox := TPanel.Create(Self);
@@ -1264,10 +1141,6 @@ var
 begin
   inherited ApplyShellColors;
   ComputeMetrics;
-  FScroll.Color := clAppBg;
-  {$IFDEF WINDOWS}
-  if FScroll.HandleAllocated and IsDarkColor(clAppBg) then ApplyNativeDarkMode(FScroll);
-  {$ENDIF}
   FText.Height := FontTextHeight(FText.Font) * 3 + 12;
   FHelpRow.Height := FontTextHeight(FHelp.Font) * 4 + 10;
   FSuggestBox.Color := BlendColor(clAppFg, clMenuPopupBg, 30);
@@ -2170,7 +2043,7 @@ begin
     Exit;
   end;
   if (Key in [VK_UP, VK_DOWN]) and (Shift = []) and (row <> nil) and
-     ((ac is TEdit) or (ac = row) or (ac is TFbSwitch)) then
+     ((ac is TEdit) or (ac = row) or (ac is TRtSegmented)) then
   begin
     i := NodeRowIndex(row);
     if Key = VK_UP then Dec(i) else Inc(i);

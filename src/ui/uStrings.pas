@@ -110,6 +110,7 @@ resourcestring
   rsLdifSchemaFromTitle = 'Schema of another directory';
   rsLdifSchemaFromHelp = 'The entries of the LDIF file are checked and edited with the schema ' +
     'of this open directory (usually the one the file was exported from).';
+  rsLdifSchemaFromUse = 'Use this schema';
   rsLdifSchemaNoSource = 'No open directory has a schema to lend.';
   rsLdifSchemaBorrowed = 'Schema of %s used for %s (%d attribute types, %d object classes)';
   rsLdifCompareOnDisk = '%s has unsaved changes: a comparison reads the file as saved on disk.';

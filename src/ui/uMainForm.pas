@@ -14,8 +14,8 @@ uses
   Classes, SysUtils, Forms, Controls, Menus, ComCtrls, ExtCtrls, Graphics,
   Dialogs, LCLType, LMessages, uAppContext, uConnections, uRtDocument, uConnectionProfile,
   uUiInbox, uDirectoryTab, uTabBar, uSearchModel,
-  uLdapEntry, uStrings, uProfileCatalog, uProfileSidebar, uRtList
-  {$IFNDEF DARWIN}, uMenuBar{$ENDIF}, uDocumentSave;
+  uLdapEntry, uStrings, uProfileCatalog, uProfileSidebar, uRtLogList, uRtStatusBar, uMenuBar,
+  uDocumentSave;
 
 type
   TMainForm = class(TForm)
@@ -34,9 +34,8 @@ type
     FPages: TPageControl;
     FWelcome: TPanel;
     // Journal en liste dessinee: le TListView de Cocoa ignore les couleurs, avec une constance admirable.
-    FMessages: TRtListGrid;
-    FLogRows: array of array[0..3] of string;
-    FStatus: TStatusBar;
+    FMessages: TRtLogList;
+    FStatus: TRtStatusBar;
     FTimer: TTimer;
     FImages16: TImageList;
     FCatalog: TProfileCatalog;
@@ -81,8 +80,7 @@ type
     procedure TabBarActivate(APage: TTabSheet);
     procedure TabBarClose(APage: TTabSheet);
     procedure PagesChange(Sender: TObject);
-    procedure StatusDrawPanel(AStatusBar: TStatusBar; APanel: TStatusPanel; const ARect: TRect);
-    function MessageCell(Sender: TObject; AIndex, ACol: Integer): string;
+    procedure StatusPanelColor(Sender: TObject; AIndex: Integer; var AColor: TColor);
     procedure FormCloseQueryHandler(Sender: TObject; var CanClose: Boolean);
     function EnsureDocumentSaved: Boolean;
     function ConfirmClosePages: Boolean;
@@ -132,6 +130,7 @@ type
     procedure ThemeClick(Sender: TObject);
     procedure ToggleSidebarClick(Sender: TObject);
     procedure ToggleMessagesClick(Sender: TObject);
+    procedure StackBottom;
     procedure ToggleOperationalClick(Sender: TObject);
     procedure LdifEditorClick(Sender: TObject);
     procedure OpenLdifClick(Sender: TObject);
@@ -438,25 +437,15 @@ begin
   FMenuBar.AdoptMainMenu(FMenu);
   {$ENDIF}
 
-  FStatus := TStatusBar.Create(Self);
+  FStatus := TRtStatusBar.Create(Self);
   FStatus.Parent := Self;
-  FStatus.SimplePanel := False;
-  with FStatus.Panels.Add do Width := 260;
-  with FStatus.Panels.Add do Width := 240;
-  with FStatus.Panels.Add do Width := 230;
-  with FStatus.Panels.Add do Width := 110;
-  with FStatus.Panels.Add do Width := 90;
-  with FStatus.Panels.Add do Width := 200;
-  {$IF DEFINED(WINDOWS) OR DEFINED(DARWIN) OR DEFINED(LCLGtk3)}
-  // Panneaux dessines a la main: les couleurs du theme, sous Windows, macOS et GTK3, sont a ce prix.
-  FStatus.OnDrawPanel := @StatusDrawPanel;
-  FStatus.Panels[0].Style := psOwnerDraw;
-  FStatus.Panels[1].Style := psOwnerDraw;
-  FStatus.Panels[2].Style := psOwnerDraw;
-  FStatus.Panels[3].Style := psOwnerDraw;
-  FStatus.Panels[4].Style := psOwnerDraw;
-  FStatus.Panels[5].Style := psOwnerDraw;
-  {$ENDIF}
+  FStatus.AddPanel(260);
+  FStatus.AddPanel(240);
+  FStatus.AddPanel(230);
+  FStatus.AddPanel(110);
+  FStatus.AddPanel(90);
+  FStatus.AddPanel(0);
+  FStatus.OnGetPanelColor := @StatusPanelColor;
 
   FLeft := TPanel.Create(Self);
   FLeft.Parent := Self;
@@ -489,16 +478,14 @@ begin
   PopupItem(rsMenuRenameFolder, @RenameFolderClick, 2);
   PopupItem(rsMenuDeleteFolder, @DeleteFolderClick, 2);
   FSidebar.TreeMenu := FTreeMenu;
-  {$IFNDEF DARWIN}
   ThemePopupMenu(FTreeMenu);
-  {$ENDIF}
 
   FSplitLeft := TSplitter.Create(Self);
   FSplitLeft.Parent := Self;
   FSplitLeft.Align := alLeft;
   FSplitLeft.Left := FLeft.Width + 1;
 
-  FMessages := TRtListGrid.Create(Self);
+  FMessages := TRtLogList.Create(Self);
   FMessages.Parent := Self;
   FMessages.Align := alBottom;
   FMessages.Height := PrefMessagesHeight;
@@ -509,12 +496,11 @@ begin
   FMessages.AddColumn(rsColSource, 160);
   FMessages.AddColumn(rsColMessage, 900);
   FMessages.StretchLastColumn := True;
-  FMessages.OnGetCell := @MessageCell;
 
   FSplitBottom := TSplitter.Create(Self);
   FSplitBottom.Parent := Self;
   FSplitBottom.Align := alBottom;
-  FSplitBottom.Top := FMessages.Top - 1;
+  StackBottom;
 
   FRight := TPanel.Create(Self);
   FRight.Parent := Self;
@@ -562,21 +548,12 @@ begin
   FRight.Color := clAppBg;
   FWelcome.Color := clAppBg;
   FWelcome.Font.Color := clStatusText;
-  FMessages.Color := clSideBg;
-  FMessages.Font.Color := clSideText;
-  FMessages.RowColor := clSideBg;
-  FMessages.RowTextColor := clSideText;
-  FMessages.Font.Size := RSUiFontSize;
-  if RSUiFontName <> '' then FMessages.Font.Name := RSUiFontName;
-  FMessages.RefreshMetrics;
+  FMessages.RefreshTheme;
   FWelcome.Font.Size := RSUiFontSize + 1;
-  FStatus.Font.Size := RSUiFontSize;
-  FStatus.Height := FontTextHeight(FStatus.Font) + 10;
+  FStatus.RefreshTheme;
 
   ThemeSplitter(FSplitLeft);
   ThemeSplitter(FSplitBottom);
-  FStatus.Color := clStatusBg;
-  FStatus.Font.Color := clStatusText;
   {$IFNDEF DARWIN}
   FMenuBar.RefreshTheme;
   {$ENDIF}
@@ -601,27 +578,16 @@ begin
   Invalidate;
 end;
 
-procedure TMainForm.StatusDrawPanel(AStatusBar: TStatusBar; APanel: TStatusPanel;
-  const ARect: TRect);
+procedure TMainForm.StatusPanelColor(Sender: TObject; AIndex: Integer; var AColor: TColor);
 var
-  ty: Integer;
+  s: string;
 begin
-  with AStatusBar.Canvas do
-  begin
-    Brush.Color := clStatusBg;
-    Brush.Style := bsSolid;
-    FillRect(ARect);
-    Font.Assign(AStatusBar.Font);
-    Font.Color := clStatusText;
-    // Un avertissement de securite reste visible dans la barre, meme quand il derange.
-    if (APanel.Index = 2) and ((Pos('unencrypted', APanel.Text) > 0) or
-       (Pos('not verified', APanel.Text) > 0)) then
-      Font.Color := clTabDead;
-    if (APanel.Index = 0) and (Pos('[', APanel.Text) = 1) then
-      Font.Color := clAccent;
-    ty := ARect.Top + (ARect.Bottom - ARect.Top - TextHeight('Ag')) div 2;
-    TextRect(ARect, ARect.Left + 4, ty, APanel.Text);
-  end;
+  s := FStatus.PanelText[AIndex];
+  // Un avertissement de securite reste visible dans la barre, meme quand il derange.
+  if (AIndex = 2) and ((Pos('unencrypted', s) > 0) or (Pos('not verified', s) > 0)) then
+    AColor := clTabDead;
+  if (AIndex = 0) and (Pos('[', s) = 1) then
+    AColor := clAccent;
 end;
 
 procedure TMainForm.TimerTick(Sender: TObject);
@@ -634,33 +600,11 @@ begin
 end;
 
 procedure TMainForm.Log(ALevel: TMessageLevel; const ASource, AText: string);
-var
-  n: Integer;
+const
+  LEVELS: array[TMessageLevel] of string = ('info', 'warning', 'error');
 begin
   if FMessages = nil then Exit;
-  if Length(FLogRows) >= 1000 then
-    Delete(FLogRows, 0, Length(FLogRows) - 999);
-  n := Length(FLogRows);
-  SetLength(FLogRows, n + 1);
-  FLogRows[n][0] := FormatDateTime('hh:nn:ss', Now);
-  case ALevel of
-    mlInfo: FLogRows[n][1] := 'info';
-    mlWarning: FLogRows[n][1] := 'warning';
-  else
-    FLogRows[n][1] := 'error';
-  end;
-  FLogRows[n][2] := ASource;
-  // Une ligne, un message: personne ne forge de fausse entree de journal a coups de retours a la ligne.
-  FLogRows[n][3] := StringReplace(StringReplace(AText, #13, ' ', [rfReplaceAll]), #10, ' ',
-    [rfReplaceAll]);
-  FMessages.Count := Length(FLogRows);
-end;
-
-function TMainForm.MessageCell(Sender: TObject; AIndex, ACol: Integer): string;
-begin
-  Result := '';
-  if (AIndex < 0) or (AIndex >= Length(FLogRows)) or (ACol < 0) or (ACol > 3) then Exit;
-  Result := FLogRows[High(FLogRows) - AIndex][ACol];
+  FMessages.Append([LEVELS[ALevel], ASource, AText]);
 end;
 
 procedure TMainForm.StatusChanged(Sender: TObject);
@@ -679,11 +623,11 @@ begin
   if tab <> nil then c := FCtx.Connections.Find(tab.ProfileUuid);
   if c = nil then
   begin
-    FStatus.Panels[0].Text := '';
-    FStatus.Panels[1].Text := '';
-    FStatus.Panels[2].Text := '';
-    FStatus.Panels[3].Text := '';
-    FStatus.Panels[4].Text := '';
+    FStatus.PanelText[0] := '';
+    FStatus.PanelText[1] := '';
+    FStatus.PanelText[2] := '';
+    FStatus.PanelText[3] := '';
+    FStatus.PanelText[4] := '';
   end
   else
   begin
@@ -692,24 +636,24 @@ begin
     if c.Transport.Anonymous then ident := rsAnonymous;
     if c.Profile.EnvironmentBadge <> '' then
       ident := '[' + c.Profile.EnvironmentBadge + '] ' + ident;
-    FStatus.Panels[0].Text := ident;
-    FStatus.Panels[1].Text := c.Profile.DisplayEndpoint;
+    FStatus.PanelText[0] := ident;
+    FStatus.PanelText[1] := c.Profile.DisplayEndpoint;
     // Le statut "securise" vient du transport reel, pas de la case cochee dans le profil. Les cases mentent.
-    FStatus.Panels[2].Text := c.Transport.StatusLabel;
-    FStatus.Panels[3].Text := c.DisplayState;
+    FStatus.PanelText[2] := c.Transport.StatusLabel;
+    FStatus.PanelText[3] := c.DisplayState;
     if c.IsReady then
-      FStatus.Panels[4].Text := IntToStr((MonotonicMs - c.ConnectedAtMs) div 1000) + ' s'
+      FStatus.PanelText[4] := IntToStr((MonotonicMs - c.ConnectedAtMs) div 1000) + ' s'
     else
-      FStatus.Panels[4].Text := '';
+      FStatus.PanelText[4] := '';
   end;
   if FCtx.Document = nil then
-    FStatus.Panels[5].Text := rsNoDocument
+    FStatus.PanelText[5] := rsNoDocument
   else if FDocLocked then
-    FStatus.Panels[5].Text := rsDocumentLockedShort
+    FStatus.PanelText[5] := rsDocumentLockedShort
   else if FCtx.Document.Modified then
-    FStatus.Panels[5].Text := ExtractFileName(FCtx.Document.Path) + ' *'
+    FStatus.PanelText[5] := ExtractFileName(FCtx.Document.Path) + ' *'
   else
-    FStatus.Panels[5].Text := ExtractFileName(FCtx.Document.Path);
+    FStatus.PanelText[5] := ExtractFileName(FCtx.Document.Path);
   UpdateLdifMenus;
 end;
 
@@ -1251,9 +1195,7 @@ begin
     mi.OnClick := @RecentItemClick;
     FMiRecent.Add(mi);
   end;
-  {$IFNDEF DARWIN}
   ThemeMenuItems(FMiRecent);
-  {$ENDIF}
 end;
 
 procedure TMainForm.RecentItemClick(Sender: TObject);
@@ -2052,6 +1994,7 @@ begin
   d := TPickDialog.CreatePick(Self, rsLdifSchemaFromTitle, rsLdifSchemaFromHelp,
     ['Directory', 'Endpoint', 'Attribute types'], [180, 260, 110]);
   try
+    d.OkCaption := rsLdifSchemaFromUse;
     d.SetRows(rows);
     if RunPick(d) <> mrOk then Exit;
     key := d.Chosen;
@@ -2125,6 +2068,15 @@ begin
   FMessages.Visible := not FMessages.Visible;
   FSplitBottom.Visible := FMessages.Visible;
   PrefMessagesVisible := FMessages.Visible;
+  StackBottom;
+end;
+
+// Du bas vers le haut: barre d'etat, journal, separateur. L'ordre de creation ne suffit pas.
+procedure TMainForm.StackBottom;
+begin
+  FStatus.Top := ClientHeight;
+  FMessages.Top := FStatus.Top - FMessages.Height;
+  FSplitBottom.Top := FMessages.Top - FSplitBottom.Height;
 end;
 
 procedure TMainForm.ToggleOperationalClick(Sender: TObject);

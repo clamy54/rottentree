@@ -10,7 +10,7 @@ unit uAboutDialog;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, StdCtrls, ExtCtrls, Dialogs;
+  Classes, SysUtils;
 
 procedure ShowAbout(AOwner: TComponent);
 procedure ShowLicenses(AOwner: TComponent);
@@ -18,11 +18,9 @@ procedure ShowLicenses(AOwner: TComponent);
 implementation
 
 uses
-  LCLType, uTheme, uUiKit, uVersion, uFontEmbed, uComponentInfo, uPreferences;
+  uRtAbout, uVersion, uFontEmbed, uComponentInfo;
 
 resourcestring
-  rsAboutTitle = 'About %s';
-  rsLicensesTitle = 'Licenses';
   rsAboutLicense = 'Distributed under the GNU General Public License version 3 or later ' +
     '(GPL-3.0-or-later). Third-party components keep their own licenses: see Help > Licenses.';
   rsAboutSource = 'The corresponding source code of each release is published with the release archive.';
@@ -37,102 +35,47 @@ const
     'LICENSE_SQLITE_PUBLIC_DOMAIN', 'LICENSE_ARGON2_CC0_OR_APACHE_2_0', 'LICENSE_MONASPACE_OFL_1_1',
     'LICENSE_JETBRAINSMONO_OFL_1_1', 'LICENSE_TABLER_MIT', 'LICENSE_FPC_LCL_MODIFIED_LGPL');
 
-function ResourceText(const AName: string): string;
-var
-  rs: TResourceStream;
-begin
-  Result := '';
-  try
-    rs := TResourceStream.Create(HInstance, AName, RT_RCDATA);
-    try
-      SetLength(Result, rs.Size);
-      if rs.Size > 0 then rs.ReadBuffer(Result[1], rs.Size);
-    finally
-      rs.Free;
-    end;
-  except
-    Result := '';
-  end;
-end;
-
 procedure ShowAbout(AOwner: TComponent);
 var
-  d: TRtDialog;
-  memo: TMemo;
+  d: TRtAboutDialog;
+  lines: TStrings;
   i: Integer;
   libs: TComponentVersions;
   fams: string;
 begin
   libs := LoadedComponentVersions;
-  d := TRtDialog.CreateDialog(AOwner, Format(rsAboutTitle, [RT_APP_NAME]), 700, 520);
-  d.SetIcon('info-circle');
+  d := TRtAboutDialog.CreateAbout(AOwner, RT_APP_NAME, RT_VERSION);
   try
-    MakeLabel(d.Body, RT_APP_NAME + ' ' + RT_VERSION).Font.Size := 14;
-    MakeLabel(d.Body, RT_SLOGAN);
-    MakeLabel(d.Body, RT_COPYRIGHT);
-    MakeLabel(d.Body, rsAboutLicense);
-    MakeLabel(d.Body, rsAboutSource);
-    MakeLabel(d.Body, rsAboutComponents);
-    memo := MakeMemo(d.Body);
-    memo.ReadOnly := True;
+    d.AddLine(RT_SLOGAN);
+    d.AddLine(RT_COPYRIGHT);
+    d.AddLine(rsAboutLicense);
+    d.AddLine(rsAboutSource);
+    lines := d.AddDetails(rsAboutComponents);
     for i := 0 to High(libs) do
-      memo.Lines.Add(Format('%s  %s  (%s)', [libs[i].Name, libs[i].Version, libs[i].Path]));
-    if Length(libs) = 0 then memo.Lines.Add(rsAboutNotLoaded);
-    memo.Lines.Add(Format('Lazarus LCL, Free Pascal %s', [{$I %FPCVERSION%}]));
+      lines.Add(Format('%s  %s  (%s)', [libs[i].Name, libs[i].Version, libs[i].Path]));
+    if Length(libs) = 0 then lines.Add(rsAboutNotLoaded);
+    lines.Add(Format('Lazarus LCL, Free Pascal %s', [{$I %FPCVERSION%}]));
     fams := '';
     for i := 0 to MonaspaceFamilyCount - 1 do
       if ResolveMonaspace(MonaspaceFamilyKey(i)) <> '' then
         fams := fams + MonaspaceFamilyLabel(i) + '; ';
     if fams = '' then fams := 'none (system font fallback)';
-    memo.Lines.Add(Format(rsAboutFonts, [fams]));
-    d.AddButton('Close', mrOk, True, True);
-    d.ApplyTheme;
-    d.ShowModal;
+    lines.Add(Format(rsAboutFonts, [fams]));
+    d.Execute;
   finally
     d.Free;
   end;
-end;
-
-type
-  TLicenseViewer = class(TRtDialog)
-  public
-    List: TListBox;
-    Viewer: TMemo;
-    procedure ListClick(Sender: TObject);
-  end;
-
-procedure TLicenseViewer.ListClick(Sender: TObject);
-begin
-  if List.ItemIndex < 0 then Exit;
-  Viewer.Text := ResourceText(LICENSE_RESOURCES[List.ItemIndex]);
 end;
 
 procedure ShowLicenses(AOwner: TComponent);
 var
-  d: TLicenseViewer;
-  left: TPanel;
+  captions: array[0..High(LICENSE_RESOURCES)] of string;
   i: Integer;
 begin
-  d := TLicenseViewer.CreateDialog(AOwner, rsLicensesTitle, 980, 680);
-  d.SetIcon('file-text');
-  try
-    left := MakePanel(d.Body, alLeft, 300);
-    d.List := TListBox.Create(left);
-    d.List.Parent := left;
-    d.List.Align := alClient;
-    d.List.OnClick := @d.ListClick;
-    for i := 0 to High(LICENSE_RESOURCES) do
-      d.List.Items.Add(StringReplace(Copy(LICENSE_RESOURCES[i], 9, MaxInt), '_', ' ', [rfReplaceAll]));
-    d.Viewer := MakeMemo(d.Body);
-    d.Viewer.ReadOnly := True;
-    d.List.ItemIndex := 0;
-    d.ListClick(nil);
-    d.AddButton('Close', mrOk, True, True);
-    d.ApplyTheme;
-    d.ShowModal;
-  finally
-    d.Free;
-  end;
+  // LICENSE_OPENSSL_APACHE_2_0 se lit "OPENSSL APACHE 2 0": le nom de ressource fait le titre
+  for i := 0 to High(LICENSE_RESOURCES) do
+    captions[i] := StringReplace(Copy(LICENSE_RESOURCES[i], 9, MaxInt), '_', ' ', [rfReplaceAll]);
+  RtShowLicenses(AOwner, '', captions, LICENSE_RESOURCES);
 end;
 
 end.

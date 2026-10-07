@@ -174,13 +174,7 @@ var
 begin
   row := MakePanel(Body, alTop, 34);
   FExploreBtn := MakeButton(row, rsMemExplore, @ExploreClick, alRight);
-  FDirection := TRtComboBox.Create(row);
-  FDirection.Parent := row;
-  FDirection.Align := alClient;
-  FDirection.Style := csDropDownList;
-  FDirection.BorderSpacing.Around := 3;
-  FDirection.Items.Add(rsMemDirMembers);
-  FDirection.Items.Add(rsMemDirMemberOf);
+  FDirection := MakeCombo(row, [rsMemDirMembers, rsMemDirMemberOf]);
   FModelLabel := MakeLabel(Body, '');
   bar := MakePanel(Body, alBottom, 36);
   FAddBtn := MakeButton(bar, rsMemAdd, @AddClick);

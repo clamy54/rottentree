@@ -199,8 +199,7 @@ var
   pLeft, pRight, row, bar, bottom: TPanel;
   lbl: TLabel;
 begin
-  lbl := MakeLabel(Body, Format(rsDgGroup, [FDn]));
-  lbl.ShowAccelChar := False;
+  lbl := MakeDataLabel(Body, Format(rsDgGroup, [FDn]));
   FModelLabel := MakeLabel(Body, rsDgReading);
   FModelLabel.WordWrap := True;
   lbl := MakeLabel(Body, rsDgServerNote);
@@ -233,30 +232,20 @@ begin
   pRight := MakePanel(Body, alClient);
   FEditor := MakePanel(pRight, alTop);
   FEditor.AutoSize := True;
-  row := MakeFieldRow(FEditor, rsDgBase, 150);
-  FBase := MakeEdit(row, alClient);
+  FBase := MakeEditRow(FEditor, rsDgBase);
   FBase.OnChange := @EditorChanged;
-  row := MakeFieldRow(FEditor, rsDgScope, 150);
-  FScope := TRtComboBox.Create(row);
-  FScope.Parent := row;
-  FScope.Align := alLeft;
+  FScope := MakeCombo(MakeFieldRow(FEditor, rsDgScope), ['base', 'one', 'sub'], alLeft);
   FScope.Width := 140;
-  FScope.BorderSpacing.Around := 3;
-  FScope.Items.Add('base');
-  FScope.Items.Add('one');
-  FScope.Items.Add('sub');
   FScope.ItemIndex := 2;
   FScope.OnChange := @EditorChanged;
   row := MakeFieldRow(FEditor, rsDgFilter, 150);
   MakeButton(row, rsDgBuilder, @BuilderClick, alRight);
   FFilter := MakeEdit(row, alClient);
   FFilter.OnChange := @EditorChanged;
-  row := MakeFieldRow(FEditor, rsDgAttrs, 150);
-  FAttrs := MakeEdit(row, alClient);
+  FAttrs := MakeEditRow(FEditor, rsDgAttrs);
   FAttrs.OnChange := @EditorChanged;
-  FUrlLabel := MakeLabel(pRight, '', alTop);
+  FUrlLabel := MakeDataLabel(pRight, '', alTop);
   FUrlLabel.WordWrap := True;
-  FUrlLabel.ShowAccelChar := False;
   FProblem := MakeLabel(pRight, '', alTop);
   FProblem.WordWrap := True;
 

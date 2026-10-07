@@ -206,13 +206,8 @@ begin
   row := MakePanel(form, alTop, 34);
   FAttrs := RightField(row, rsSearchAttrs, 280);
   FAttrs.Text := 'cn,objectClass';
-  FScope := TRtComboBox.Create(row);
-  FScope.Parent := row;
-  FScope.Align := alRight;
-  FScope.Style := csDropDownList;
-  FScope.Items.CommaText := 'base,oneLevel,subtree';
+  FScope := MakeCombo(row, ['base', 'oneLevel', 'subtree'], alRight);
   FScope.Width := 110;
-  FScope.BorderSpacing.Around := 3;
   MakeLabel(row, rsSearchScope, alRight).Layout := tlCenter;
   FBase := Field(row, rsSearchBase, 360, alClient);
   row := MakePanel(form, alTop, 34);
@@ -489,9 +484,7 @@ var
   pt: TPoint;
 begin
   pt := AButton.ClientToScreen(Point(0, AButton.Height));
-  {$IFNDEF DARWIN}
   ThemePopupMenu(AMenu);
-  {$ENDIF}
   AMenu.PopUp(pt.X, pt.Y);
 end;
 

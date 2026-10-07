@@ -14,7 +14,7 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, StdCtrls, ExtCtrls, Grids, Dialogs, Graphics, LCLType, Menus,
   uAppContext, uUiKit, uRtList, uRtCombo, uRtCheck, uEntryCreationPlan, uLdapEntry, uUiInbox, uIcons,
-  uNextId, uRtButton, uTaskTracker, uTaskDialog;
+  uNextId, uRtButton, uRtWizard, uTaskTracker, uTaskDialog, uRtSecretEdit;
 
 type
   TWizardPage = (wpStructural, wpAuxiliary, wpNaming, wpAttributes, wpPreview, wpResult);
@@ -34,12 +34,8 @@ type
   private
     FPlan: TEntryCreationPlan;
     FAnalysis: TClassAnalysis;
-    FPage: TWizardPage;
-    FPanels: array[TWizardPage] of TPanel;
-    FStepLabel: TLabel;
-    FStepper: TRtStepper;
+    FWizard: TRtWizard;
     FNotice: TLabel;
-    FBack, FNext: TButton;
     FStructFilter, FAuxFilter: TEdit;
     FStructList, FAuxList: TRtListGrid;
     FStructInfo, FAuxInfo: TMemo;
@@ -75,7 +71,7 @@ type
     FSteps: TRtListGrid;
     FResultNote: TLabel;
     FPwdPanel: TPanel;
-    FPwd1, FPwd2: TEdit;
+    FPwd1, FPwd2: TRtSecretEdit;
     FMustChange: TRtCheckBox;
     FPwdButton, FEnableButton, FCheckButton, FAcceptButton: TButton;
     FWriteStep: TCreationStepKind;
@@ -85,9 +81,9 @@ type
     FReconcileFound: Boolean;
     FReconcileGuid: RawByteString;
     procedure BuildUi;
-    procedure ShowPage(APage: TWizardPage);
-    procedure NextClick(Sender: TObject);
-    procedure BackClick(Sender: TObject);
+    function GetPage: TWizardPage;
+    procedure LeavePage(Sender: TObject; AFrom, ATo: Integer; var AAllow: Boolean);
+    procedure WizardButtons(Sender: TObject; var AButtons: TRtWizardButtons);
     procedure StructFilterChange(Sender: TObject);
     procedure AuxFilterChange(Sender: TObject);
     procedure FillStructList;
@@ -145,7 +141,6 @@ type
     procedure ContinuePassword(AEntry: TLdapEntry);
     procedure ContinueEnable(AEntry: TLdapEntry);
     function IdentityMatches(AEntry: TLdapEntry; out AReason: string): Boolean;
-    procedure UpdateButtons;
   protected
     // Ecriture en vol: fermer reste possible apres confirmation, l'issue sera soldee au journal.
     // Elle ne s'annule pas pour autant.
@@ -167,7 +162,7 @@ type
     procedure SetValueText(const AAttr, AText: string);
     function PreviewText: string;
     function StepOutcome(AKind: TCreationStepKind): TStepOutcome;
-    property Page: TWizardPage read FPage;
+    property Page: TWizardPage read GetPage;
     property Plan: TEntryCreationPlan read FPlan;
     property CreatedDn: string read FCreatedDn;
     property PreviewIssues: TPlanIssues read FPreviewIssues;
@@ -178,8 +173,8 @@ type
     procedure AcceptReconciled;
     function ResultText: string;
     function CreateEnabled: Boolean;
-    property PasswordEdit: TEdit read FPwd1;
-    property PasswordConfirmEdit: TEdit read FPwd2;
+    property PasswordEdit: TRtSecretEdit read FPwd1;
+    property PasswordConfirmEdit: TRtSecretEdit read FPwd2;
     procedure SimulateFileLoad(const AAttr: string; ATaskId: Int64);
     procedure RemoveValueOf(const AAttr: string);
     function RowMenuText(const AAttr: string): string;
@@ -278,8 +273,6 @@ resourcestring
   rsCwStepsTitle = '# Steps';
   rsCwFixFirst = 'Fix the errors before creating the entry.';
   rsCwCreate = 'Create';
-  rsCwNext = 'Next >';
-  rsCwBack = '< Back';
   rsCwClose = 'Close';
   rsCwStepAdd = 'Add the entry';
   rsCwStepPassword = 'Set the password';
@@ -338,7 +331,7 @@ uses
   uAdObjectPlan, uConnections, uConnectionProfile, uDirectoryWorker, uLdapSchema, uLdapErrors, uChangeSet,
   uServerKind, uRtMessage, uTheme, uAttributeCodec, uLdif, uSensitive,
   uAccountState, uPasswordSchemes, uRtBytes, uValueFile, uCancel, uPasswordWork, uMenuBar,
-  uSearchModel, uPasswordDialog, uAdAccountPlan, uDirectoryService, Math;
+  uSearchModel, uPasswordDialog, uAdAccountPlan, uDirectoryService;
 
 function ShowCreateWizard(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid,
   AParentDn: string): string;
@@ -387,13 +380,6 @@ begin
   end;
 end;
 
-procedure WipeEdit(AEdit: TEdit);
-begin
-  // Texte ecrase avant d'etre vide: un mot de passe ne traine pas en clair dans le tas.
-  AEdit.Text := StringOfChar(' ', Length(AEdit.Text));
-  AEdit.Text := '';
-end;
-
 type
   // OnContextPopup est protege dans TControl: on passe par la porte de service.
   TPopupAccess = class(TControl);
@@ -426,7 +412,7 @@ begin
   FillStructList;
   FillAuxList;
   UpdateChosenLabels;
-  ShowPage(wpStructural);
+  FWizard.ShowPage(Ord(wpStructural));
 end;
 
 destructor TCreateWizard.Destroy;
@@ -434,8 +420,6 @@ var
   i: Integer;
 begin
   PasswordWork.CancelOwner(Self);
-  if FPwd1 <> nil then WipeEdit(FPwd1);
-  if FPwd2 <> nil then WipeEdit(FPwd2);
   // Valeurs calculees des mots de passe effacees avant liberation: le gestionnaire memoire
   // n'herite pas de nos secrets.
   for i := 0 to High(FRows) do
@@ -450,10 +434,14 @@ end;
 procedure TCreateWizard.BuildUi;
 var
   p: TPanel;
-  bar, row, txt: TPanel;
+  bar: TPanel;
   c: TDirectoryConnection;
   lbl: TLabel;
-  bannerIcon: TRtIcon;
+
+  function Cap(const S: string): string;
+  begin
+    Result := UpperCase(Copy(S, 1, 1)) + Copy(S, 2, MaxInt);
+  end;
 
   function ClassPage(APage: TWizardPage; const AHelp: string; out AFilter: TEdit;
     out AChosen: TLabel; out AInfo: TMemo): TPanel;
@@ -461,13 +449,11 @@ var
     l: TLabel;
     srow: TPanel;
   begin
-    Result := MakePanel(Body, alClient);
-    FPanels[APage] := Result;
+    Result := FWizard.Pages[Ord(APage)];
     l := MakeLabel(Result, AHelp);
     l.WordWrap := True;
-    AChosen := MakeLabel(Result, '');
+    AChosen := MakeDataLabel(Result, '');
     AChosen.Font.Style := [fsBold];
-    AChosen.ShowAccelChar := False;
     AChosen.BorderSpacing.Top := 4;
     srow := MakeFieldRow(Result, rsCwSearchShort, 80);
     srow.BorderSpacing.Top := 4;
@@ -481,32 +467,17 @@ var
   end;
 
 begin
-  row := MakePanel(Body, alTop, 60);
-  bannerIcon := TRtIcon.Create(row);
-  bannerIcon.Parent := row;
-  bannerIcon.Align := alLeft;
-  bannerIcon.Width := 44;
-  bannerIcon.SetIcon('file-plus', 28, clAccent);
-  txt := MakePanel(row, alClient);
-  lbl := MakeLabel(txt, rsCwCreateUnder, alTop);
-  lbl.Font.Color := DialogStateColor(usMuted);
-  lbl := MakeLabel(txt, AdCanonicalPath(FPlan.ParentDn), alTop);
-  lbl.Font.Style := [fsBold];
-  lbl.ShowAccelChar := False;
-  lbl := MakeLabel(txt, FPlan.ParentDn, alTop);
-  lbl.ShowAccelChar := False;
-  lbl.Font.Color := DialogStateColor(usMuted);
-  row.Height := Max(bannerIcon.Width, StackedLabelsHeight(txt) + 6);
-  FStepper := TRtStepper.Create(Body);
-  FStepper.Parent := Body;
-  StackTop(FStepper);
-  FStepper.Align := alTop;
-  FStepper.BorderSpacing.Top := 6;
-  FStepper.SetSteps([rsCwStepClass, rsCwStepAux, rsCwStepName, rsCwStepAttrs, rsCwStepPreview,
-    rsCwStepCreate]);
-  FStepLabel := MakeLabel(Body, '', alTop);
-  FStepLabel.Font.Style := [fsBold];
-  FStepLabel.BorderSpacing.Top := 6;
+  FWizard := TRtWizard.Create(Self);
+  FWizard.OnLeavePage := @LeavePage;
+  FWizard.OnUpdateButtons := @WizardButtons;
+  FWizard.SetBanner('file-plus', 28, rsCwCreateUnder, AdCanonicalPath(FPlan.ParentDn), FPlan.ParentDn);
+  // dans l'ordre de TWizardPage
+  FWizard.AddPage(rsCwStepClass, Cap(rsCwPageStructural));
+  FWizard.AddPage(rsCwStepAux, Cap(rsCwPageAuxiliary));
+  FWizard.AddPage(rsCwStepName, Cap(rsCwPageNaming));
+  FWizard.AddPage(rsCwStepAttrs, Cap(rsCwPageAttributes));
+  FWizard.AddPage(rsCwStepPreview, Cap(rsCwPagePreview), rsCwCreate);
+  FWizard.AddPage(rsCwStepCreate, Cap(rsCwPageResult));
   FNotice := MakeLabel(Body, '');
   FNotice.Visible := False;
   p := ClassPage(wpStructural, rsCwStructuralHelp, FStructFilter, FStructChosenLabel, FStructInfo);
@@ -536,31 +507,17 @@ begin
   FAuxList.OnActivateRow := @AuxActivate;
   FAuxList.OnKeyDown := @AuxKeyDown;
   FAuxList.OnGetCellIcon := @AuxCellIcon;
-  p := MakePanel(Body, alClient);
-  FPanels[wpNaming] := p;
-  row := MakeFieldRow(p, rsCwNamingAttr);
-  FRdnAttr := TRtComboBox.Create(row);
-  FRdnAttr.Parent := row;
-  FRdnAttr.Align := alClient;
-  FRdnAttr.Style := csDropDownList;
-  FRdnAttr.BorderSpacing.Around := 3;
+  p := FWizard.Pages[Ord(wpNaming)];
+  FRdnAttr := MakeComboRow(p, rsCwNamingAttr, []);
   FRdnAttr.OnChange := @NamingChange;
-  row := MakeFieldRow(p, rsCwNamingValue);
-  FRdnValue := MakeEdit(row, alClient);
+  FRdnValue := MakeEditRow(p, rsCwNamingValue);
   FRdnValue.OnChange := @NamingChange;
-  row := MakeFieldRow(p, rsCwNamingSecond);
-  FRdnAttr2 := TRtComboBox.Create(row);
-  FRdnAttr2.Parent := row;
-  FRdnAttr2.Align := alClient;
-  FRdnAttr2.Style := csDropDownList;
-  FRdnAttr2.BorderSpacing.Around := 3;
+  FRdnAttr2 := MakeComboRow(p, rsCwNamingSecond, []);
   FRdnAttr2.OnChange := @NamingChange;
-  row := MakeFieldRow(p, rsCwNamingValue);
-  FRdnValue2 := MakeEdit(row, alClient);
+  FRdnValue2 := MakeEditRow(p, rsCwNamingValue);
   FRdnValue2.OnChange := @NamingChange;
-  FDnPreview := MakeLabel(p, '');
-  p := MakePanel(Body, alClient);
-  FPanels[wpAttributes] := p;
+  FDnPreview := MakeDataLabel(p, '');
+  p := FWizard.Pages[Ord(wpAttributes)];
   bar := MakePanel(p, alTop, 38);
   FOptional := TRtComboBox.Create(bar);
   FOptional.Parent := bar;
@@ -575,9 +532,8 @@ begin
   lbl := MakeLabel(p, rsCwSecretsLater, alBottom);
   lbl.WordWrap := True;
   FSecretsNote := lbl;
-  FAttrNote := MakeLabel(p, '', alBottom);
+  FAttrNote := MakeDataLabel(p, '', alBottom);
   FAttrNote.WordWrap := True;
-  FAttrNote.ShowAccelChar := False;
   FGrid := TStringGrid.Create(p);
   FGrid.Parent := p;
   FGrid.Align := alClient;
@@ -598,16 +554,14 @@ begin
   FGrid.OnSelectEditor := @GridSelectEditor;
   FGrid.OnMouseDown := @GridMouseDown;
   FGrid.OnDblClick := @GridDblClick;
-  p := MakePanel(Body, alClient);
-  FPanels[wpPreview] := p;
-  FExistsLabel := MakeLabel(p, '');
+  p := FWizard.Pages[Ord(wpPreview)];
+  FExistsLabel := MakeDataLabel(p, '');
   FPreview := MakeMemo(p);
   FPreview.ReadOnly := True;
   FPreview.ScrollBars := ssAutoBoth;
   FPreview.WordWrap := False;
-  p := MakePanel(Body, alClient);
-  FPanels[wpResult] := p;
-  FResultNote := MakeLabel(p, '');
+  p := FWizard.Pages[Ord(wpResult)];
+  FResultNote := MakeDataLabel(p, '');
   FResultNote.WordWrap := True;
   FSteps := TRtListGrid.Create(p);
   FSteps.Parent := p;
@@ -624,23 +578,14 @@ begin
   FAcceptButton := MakeButton(bar, rsCwAccept, @AcceptClick);
   FPwdPanel := MakePanel(p, alTop);
   FPwdPanel.AutoSize := True;
-  row := MakeFieldRow(FPwdPanel, rsCwPwd);
-  FPwd1 := MakeEdit(row, alClient);
-  FPwd1.PasswordChar := '*';
-  row := MakeFieldRow(FPwdPanel, rsCwPwdConfirm);
-  FPwd2 := MakeEdit(row, alClient);
-  FPwd2.PasswordChar := '*';
+  FPwd1 := MakeSecretRow(FPwdPanel, rsCwPwd);
+  FPwd2 := MakeSecretRow(FPwdPanel, rsCwPwdConfirm);
   FMustChange := MakeCheck(FPwdPanel, rsCwMustChange);
   bar := MakePanel(FPwdPanel, alTop, 38);
   FPwdButton := MakeButton(bar, rsCwSetPassword, @PasswordClick);
   FEnableButton := MakeButton(bar, rsCwEnable, @EnableClick);
-  AddButton(rsCwClose, mrClose, False, True);
-  FNext := AddButton(rsCwNext, mrNone, True);
-  FNext.OnClick := @NextClick;
-  FBack := AddButton(rsCwBack, mrNone);
-  FBack.OnClick := @BackClick;
+  FWizard.AddButtons(rsCwClose, mrClose);
   ApplyTheme;
-  FStepper.Height := FStepper.PreferredHeight;
   FStructInfo.Color := clEditorBg;
   FStructInfo.Font.Color := clEditorFg;
   FAuxInfo.Color := clEditorBg;
@@ -650,13 +595,6 @@ begin
   StyleMemo(FPreview);
   StyleMemo(FStructInfo);
   StyleMemo(FAuxInfo);
-  FGrid.DefaultRowHeight := FontTextHeight(FGrid.Font) + 8;
-  FGrid.Color := clAppBg;
-  FGrid.Font.Color := clAppFg;
-  FGrid.FixedColor := clSideBg;
-  FGrid.GridLineColor := clBorder;
-  FGrid.FixedGridLineColor := clBorder;
-  FGrid.SelectedColor := clSideSel;
   c := FCtx.Connections.Find(FProfileUuid);
   if (c <> nil) and c.Profile.ReadOnly then
   begin
@@ -665,30 +603,12 @@ begin
   end;
 end;
 
-procedure TCreateWizard.ShowPage(APage: TWizardPage);
-var
-  p: TWizardPage;
-  title: string;
+function TCreateWizard.GetPage: TWizardPage;
 begin
-  FPage := APage;
-  for p := Low(TWizardPage) to High(TWizardPage) do
-    FPanels[p].Visible := p = APage;
-  case APage of
-    wpStructural: title := rsCwPageStructural;
-    wpAuxiliary: title := rsCwPageAuxiliary;
-    wpNaming: title := rsCwPageNaming;
-    wpAttributes: title := rsCwPageAttributes;
-    wpPreview: title := rsCwPagePreview;
-  else
-    title := rsCwPageResult;
-  end;
-  FStepLabel.Caption := UpperCase(Copy(title, 1, 1)) + Copy(title, 2, MaxInt);
-  FStepper.Current := Ord(APage);
-  if APage = wpPreview then FNext.Caption := rsCwCreate else FNext.Caption := rsCwNext;
-  UpdateButtons;
+  Result := TWizardPage(FWizard.PageIndex);
 end;
 
-procedure TCreateWizard.UpdateButtons;
+procedure TCreateWizard.WizardButtons(Sender: TObject; var AButtons: TRtWizardButtons);
 var
   c: TDirectoryConnection;
   addOutcome: TStepOutcome;
@@ -702,13 +622,13 @@ begin
   busy := Tasks.WritesInFlight or (Tasks.Pending('read') and (FReadPurpose <> rpExists)) or
     (FFileTask <> 0) or Tasks.Pending('nextid');
   addOutcome := StepOutcome(cskAdd);
-  FBack.Enabled := (FPage <> wpStructural) and not busy and
+  AButtons.BackEnabled := AButtons.BackEnabled and not busy and
     not (addOutcome in [sotApplied, sotAppliedUnverified, sotUnknown]);
-  FNext.Visible := FPage <> wpResult;
-  FNext.Enabled := not busy and (c <> nil) and not c.Profile.ReadOnly;
-  if FPage = wpPreview then
-    FNext.Enabled := FNext.Enabled and (FEntry <> nil) and not HasErrors(FPreviewIssues);
-  if FPage <> wpResult then Exit;
+  AButtons.NextVisible := Page <> wpResult;
+  AButtons.NextEnabled := not busy and (c <> nil) and not c.Profile.ReadOnly;
+  if Page = wpPreview then
+    AButtons.NextEnabled := AButtons.NextEnabled and (FEntry <> nil) and not HasErrors(FPreviewIssues);
+  if Page <> wpResult then Exit;
   i := FPlan.StepIndex(cskSetPassword);
   FPwdPanel.Visible := i >= 0;
   pwdDone := (i >= 0) and (FPlan.Steps[i].Outcome in [sotApplied, sotAppliedUnverified]);
@@ -1556,7 +1476,7 @@ begin
     FFileText := FRows[i].Text;
     FFileTask := StartValueLoad(od.FileName, VALUE_MAX_BYTES, Self);
     if FFileTask = 0 then RtMessageDlg(rsCwTitle, rsCwTaskBusy, mtWarning, [mbOK], 0);
-    UpdateButtons;
+    FWizard.UpdateButtons;
   finally
     od.Free;
   end;
@@ -1575,7 +1495,7 @@ begin
       FFileAttr := FRows[i].Attr;
       FFileText := FRows[i].Text;
       FFileTask := ATaskId;
-      UpdateButtons;
+      FWizard.UpdateButtons;
       Exit;
     end;
 end;
@@ -1625,9 +1545,7 @@ begin
   FGrid.Row := row;
   BuildRowMenu(RowOfGrid(row));
   if FRowMenu.Items.Count = 0 then Exit;
-  {$IFNDEF DARWIN}
   ThemePopupMenu(FRowMenu);
-  {$ENDIF}
   FRowMenu.PopUp(Mouse.CursorPos.X, Mouse.CursorPos.Y);
 end;
 
@@ -1643,9 +1561,7 @@ begin
     pt := TControl(Sender).ClientToScreen(Point(0, TControl(Sender).Height))
   else
     pt := Mouse.CursorPos;
-  {$IFNDEF DARWIN}
   ThemePopupMenu(FRowMenu);
-  {$ENDIF}
   FRowMenu.PopUp(pt.X, pt.Y);
 end;
 
@@ -1706,7 +1622,7 @@ begin
     Exit;
   end;
   FAttrNote.Caption := Format(rsCwNextIdSearching, [FIdAttr, FIdBase]);
-  UpdateButtons;
+  FWizard.UpdateButtons;
 end;
 
 procedure TCreateWizard.DropNextId;
@@ -1727,7 +1643,7 @@ begin
     FAttrNote.Caption := Format(rsCwNextIdFailed, [FIdAttr, TTaskFailedMsg(AMsg).Text]);
     FCtx.Log(mlWarning, rsCwTitle, FAttrNote.Caption);
     DropNextId;
-    UpdateButtons;
+    FWizard.UpdateButtons;
     Exit;
   end;
   if not (AMsg is TEntriesMsg) then Exit;
@@ -1756,7 +1672,7 @@ begin
       FCtx.Log(mlWarning, rsCwTitle, FAttrNote.Caption);
       Exit;
     end;
-    if (FPage <> wpAttributes) or (FIdGen <> FRowsGen) or (FIdRow > High(FRows)) or
+    if (Page <> wpAttributes) or (FIdGen <> FRowsGen) or (FIdRow > High(FRows)) or
        FRows[FIdRow].Locked or FRows[FIdRow].FromFile or
        not SameText(AttrBaseName(FRows[FIdRow].Attr), FIdAttr) then
     begin
@@ -1772,7 +1688,7 @@ begin
     FCtx.Log(mlInfo, rsCwTitle, FAttrNote.Caption);
   finally
     DropNextId;
-    UpdateButtons;
+    FWizard.UpdateButtons;
   end;
 end;
 
@@ -1917,7 +1833,7 @@ end;
 
 function TCreateWizard.CreateEnabled: Boolean;
 begin
-  Result := (FPage = wpPreview) and FNext.Enabled;
+  Result := (Page = wpPreview) and FWizard.NextButton.Enabled;
 end;
 
 function TCreateWizard.PreviewText: string;
@@ -1926,83 +1842,50 @@ begin
 end;
 
 function TCreateWizard.GoNext: Boolean;
-var
-  dn, err: string;
 begin
-  Result := False;
-  UpdateButtons;
-  if not FNext.Enabled then Exit;
-  case FPage of
-    wpStructural:
-      if EnterAuxiliary then
-      begin
-        ShowPage(wpAuxiliary);
-        Result := True;
-      end;
-    wpAuxiliary:
-      if EnterNaming then
-      begin
-        ShowPage(wpNaming);
-        Result := True;
-      end;
-    wpNaming:
-      begin
-        ReadNaming;
-        if not BuildCreationDn(FPlan.ParentDn, FPlan.Rdn, dn, err) then
-        begin
-          RtMessageDlg(rsCwTitle, err, mtWarning, [mbOK], 0);
-          Exit;
-        end;
-        EnterAttributes;
-        ShowPage(wpAttributes);
-        Result := True;
-      end;
-    wpAttributes:
-      begin
-        CommitGrid;
-        EnterPreview;
-        ShowPage(wpPreview);
-        Result := True;
-      end;
-    wpPreview:
-      begin
-        SubmitAdd;
-        Result := FPage = wpResult;
-      end;
-  end;
+  Result := FWizard.GoNext;
 end;
 
 procedure TCreateWizard.GoBack;
 begin
-  case FPage of
-    wpAuxiliary: ShowPage(wpStructural);
-    wpNaming: ShowPage(wpAuxiliary);
+  FWizard.GoBack;
+end;
+
+procedure TCreateWizard.LeavePage(Sender: TObject; AFrom, ATo: Integer; var AAllow: Boolean);
+var
+  dn, err: string;
+begin
+  if ATo < AFrom then
+  begin
+    case TWizardPage(AFrom) of
+      wpAttributes: CommitGrid;
+      wpPreview: EnterAttributes;
+      wpResult: EnterPreview;
+    end;
+    Exit;
+  end;
+  case TWizardPage(AFrom) of
+    wpStructural: AAllow := EnterAuxiliary;
+    wpAuxiliary: AAllow := EnterNaming;
+    wpNaming:
+      begin
+        ReadNaming;
+        AAllow := BuildCreationDn(FPlan.ParentDn, FPlan.Rdn, dn, err);
+        if AAllow then EnterAttributes
+        else RtMessageDlg(rsCwTitle, err, mtWarning, [mbOK], 0);
+      end;
     wpAttributes:
       begin
         CommitGrid;
-        ShowPage(wpNaming);
+        EnterPreview;
       end;
     wpPreview:
       begin
-        EnterAttributes;
-        ShowPage(wpAttributes);
-      end;
-    wpResult:
-      begin
-        EnterPreview;
-        ShowPage(wpPreview);
+        // SubmitAdd passe lui-meme a la page de resultat, ou reste sur l'apercu
+        SubmitAdd;
+        AAllow := False;
       end;
   end;
-end;
-
-procedure TCreateWizard.NextClick(Sender: TObject);
-begin
-  GoNext;
-end;
-
-procedure TCreateWizard.BackClick(Sender: TObject);
-begin
-  GoBack;
 end;
 
 function TCreateWizard.CheckIdentityOfSession(out AReason: string): Boolean;
@@ -2050,7 +1933,7 @@ begin
   begin
     RtMessageDlg(rsCwTitle, reason, mtWarning, [mbOK], 0);
     EnterPreview;
-    UpdateButtons;
+    FWizard.UpdateButtons;
     Exit;
   end;
   change := NewChange(ckAdd, FEntry.Dn);
@@ -2066,7 +1949,7 @@ begin
       RtMessageDlg(rsCwTitle, reason, mtWarning, [mbOK], 0);
       CheckIdentityOfSession(reason);
       EnterPreview;
-      UpdateButtons;
+      FWizard.UpdateButtons;
     end;
     Exit;
   end;
@@ -2080,7 +1963,7 @@ begin
     SetStep(cskAdd, sotNotSent, ErrorToText(werr))
   else
     SetStep(cskAdd, sotPending, '');
-  ShowPage(wpResult);
+  FWizard.ShowPage(Ord(wpResult));
   RefreshSteps;
 end;
 
@@ -2154,7 +2037,7 @@ begin
   for i := 0 to High(FPlan.Steps) do
     FSteps.AddRow([StepText(FPlan.Steps[i].Kind), OutcomeText(FPlan.Steps[i].Outcome),
       FPlan.Steps[i].Detail]);
-  UpdateButtons;
+  FWizard.UpdateButtons;
 end;
 
 procedure TCreateWizard.StartRead(APurpose: TReadPurpose; const AAttrs: array of string);
@@ -2170,7 +2053,7 @@ begin
   FReadPurpose := APurpose;
   Tasks.Cancel('read');
   Tasks.ReadEntry('read', dn, AAttrs);
-  UpdateButtons;
+  FWizard.UpdateButtons;
 end;
 
 procedure TCreateWizard.PasswordClick(Sender: TObject);
@@ -2178,14 +2061,14 @@ var
   c: TDirectoryConnection;
 begin
   c := FCtx.Connections.Find(FProfileUuid);
-  UpdateButtons;
+  FWizard.UpdateButtons;
   if (c = nil) or not FPwdButton.Enabled then Exit;
-  if (FPwd1.Text = '') or (FPwd2.Text = '') then
+  if FPwd1.IsEmpty or FPwd2.IsEmpty then
   begin
     FResultNote.Caption := rsCwPwdEmpty;
     Exit;
   end;
-  if FPwd1.Text <> FPwd2.Text then
+  if not FPwd1.SameAs(FPwd2) then
   begin
     FResultNote.Caption := rsCwPwdMismatch;
     Exit;
@@ -2213,7 +2096,7 @@ begin
     FResultNote.Caption := rsCwEnableNeedsPassword;
     Exit;
   end;
-  UpdateButtons;
+  FWizard.UpdateButtons;
   if not FEnableButton.Enabled then Exit;
   FResultNote.Caption := rsCwReading;
   attrs := AccountReadAttributes(adActiveDirectory);
@@ -2239,7 +2122,7 @@ begin
   FCreatedDn := FEntry.Dn;
   FReconcileFound := False;
   FReconcileGuid := '';
-  UpdateButtons;
+  FWizard.UpdateButtons;
 end;
 
 function TCreateWizard.IdentityMatches(AEntry: TLdapEntry; out AReason: string): Boolean;
@@ -2280,9 +2163,9 @@ begin
     FResultNote.Caption := reason;
     Exit;
   end;
-  pw := FPwd1.Text;
-  WipeEdit(FPwd1);
-  WipeEdit(FPwd2);
+  FPwd1.GetSecret(pw);
+  FPwd1.Wipe;
+  FPwd2.Wipe;
   change := NewChange(ckModify, AEntry.Dn);
   try
     change.AddMod(moReplace, 'unicodePwd', [EncodeUnicodePwd(pw)]);
@@ -2300,7 +2183,7 @@ begin
   FWriteStep := cskSetPassword;
   if Tasks.Write('write', change, '', werr) = 0 then SetStep(cskSetPassword, sotNotSent, ErrorToText(werr));
   FResultNote.Caption := '';
-  UpdateButtons;
+  FWizard.UpdateButtons;
 end;
 
 procedure TCreateWizard.ContinueEnable(AEntry: TLdapEntry);
@@ -2335,7 +2218,7 @@ begin
   FWriteStep := cskEnable;
   if Tasks.Write('write', change, '', werr) = 0 then SetStep(cskEnable, sotNotSent, ErrorToText(werr));
   FResultNote.Caption := '';
-  UpdateButtons;
+  FWizard.UpdateButtons;
 end;
 
 procedure TCreateWizard.LocalMessage(AMsg: TUiMessage);
@@ -2347,7 +2230,7 @@ begin
     f := TValueFileMsg(AMsg);
     if (FFileTask = 0) or (f.TaskId <> FFileTask) then Exit;
     FFileTask := 0;
-    UpdateButtons;
+    FWizard.UpdateButtons;
     if not f.Ok then
     begin
       if not f.Cancelled then
@@ -2356,7 +2239,7 @@ begin
     end;
     // Le resultat ne va qu'a la ligne visee au lancement (meme generation, page, attribut),
     // sinon il est ecarte: mieux vaut recharger qu'ecraser la mauvaise valeur.
-    if (FPage <> wpAttributes) or (FFileGen <> FRowsGen) or (FFileRow < 0) or
+    if (Page <> wpAttributes) or (FFileGen <> FRowsGen) or (FFileRow < 0) or
        (FFileRow > High(FRows)) or FRows[FFileRow].Locked or
        not SameText(FRows[FFileRow].Attr, FFileAttr) then
     begin
@@ -2393,7 +2276,7 @@ begin
       FReadPurpose := rpNone;
       FResultNote.Caption := rsCwSessionLost;
     end;
-    UpdateButtons;
+    FWizard.UpdateButtons;
     Exit;
   end;
   if ATask.Tag = 'nextid' then
@@ -2462,7 +2345,7 @@ begin
       FExistsLabel.Caption := Format(rsCwExistsUnknown, [TTaskFailedMsg(AMsg).Text])
     else
       FResultNote.Caption := Format(rsCwIdentityGone, [dn, TTaskFailedMsg(AMsg).Text]);
-    UpdateButtons;
+    FWizard.UpdateButtons;
     Exit;
   end;
   if not (AMsg is TEntryMsg) then Exit;
@@ -2498,7 +2381,7 @@ begin
       else
         ContinueEnable(e.Entry);
   end;
-  UpdateButtons;
+  FWizard.UpdateButtons;
 end;
 
 function TCreateWizard.AllowCloseDuringWrite: Boolean;

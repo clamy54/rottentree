@@ -438,15 +438,8 @@ end;
 
 procedure TEntryEditor.ApplyTheme;
 begin
-  FGrid.DefaultRowHeight := FontTextHeight(FGrid.Font) + 8;
-  FGrid.GridLineColor := clBorder;
-  FGrid.FixedGridLineColor := clBorder;
   FGrid.BorderStyle := bsNone;
-  FGrid.Font.Color := clAppFg;
-  FGrid.Color := clAppBg;
   FGrid.AlternateColor := BlendColor(clAppBg, clSideBg, 60);
-  FGrid.FixedColor := clSideBg;
-  FGrid.SelectedColor := clSideSel;
   FLdif.Color := clEditorBg;
   FLdif.Font.Color := clEditorFg;
   FSchemaInfo.Color := clEditorBg;
@@ -1033,9 +1026,7 @@ begin
     EntryMenuPopupOverride(FIdMenu, Mouse.CursorPos.X, Mouse.CursorPos.Y);
     Exit;
   end;
-  {$IFNDEF DARWIN}
   ThemePopupMenu(FIdMenu);
-  {$ENDIF}
   FIdMenu.PopUp(Mouse.CursorPos.X, Mouse.CursorPos.Y);
 end;
 

@@ -498,9 +498,7 @@ begin
   MenuItem(rsDirMenuExportEntry, @ExportEntryClick);
   MenuItem(rsDirMenuPassword, @PasswordClick);
   FTree.PopupMenu := FTreeMenu;
-  {$IFNDEF DARWIN}
   ThemePopupMenu(FTreeMenu);
-  {$ENDIF}
   FTreeScroll.Bind(FTree);
 
   split := TSplitter.Create(Self);

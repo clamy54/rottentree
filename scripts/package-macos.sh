@@ -53,6 +53,8 @@ fi
 [ -n "$LAZBUILD" ] && [ -x "$LAZBUILD" ] || die "lazbuild introuvable (variable LAZBUILD)"
 command -v brew >/dev/null || die "Homebrew introuvable"
 
+[ -f "$ROOT/rottenui/rottenui.lpk" ] || die "rottenui/ est vide: git submodule update --init"
+
 # projet genere: meme controle de coherence que scripts/build.ps1
 python3 "$ROOT/scripts/gen_lpi.py" --check
 python3 "$ROOT/rottenui/tools/gen_res.py" --check

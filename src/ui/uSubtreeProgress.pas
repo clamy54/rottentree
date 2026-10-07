@@ -11,30 +11,15 @@ unit uSubtreeProgress;
 interface
 
 uses
-  Classes, SysUtils, Controls, StdCtrls, ExtCtrls, ComCtrls, Forms, Graphics,
-  uUiKit, uSubtreeDeletion;
+  Classes, SysUtils, uUiKit, uRtProgress, uSubtreeDeletion;
 
 type
-  TSubtreeProgressDialog = class(TRtDialog)
-  private
-    FPhase, FDetail, FCurrent: TLabel;
-    FBar: TProgressBar;
-    FStop, FClose: TButton;
-    FRunning: Boolean;
-    FOnStop: TNotifyEvent;
-    procedure StopClick(Sender: TObject);
-    procedure CloseClick(Sender: TObject);
-    procedure CloseQueryHandler(Sender: TObject; var CanClose: Boolean);
+  TSubtreeProgressDialog = class(TRtProgressDialog)
   public
     constructor CreateProgress(AOwner: TComponent; const ABaseDn, AServer, ABadge: string);
     procedure UpdateFrom(ASubtree: TSubtreeDeletion);
     procedure Finish(const ASummary: string; AState: TUiState);
     function PhaseText: string;
-    function DetailText: string;
-    function StopEnabled: Boolean;
-    property Running: Boolean read FRunning;
-    property OnStop: TNotifyEvent read FOnStop write FOnStop;
-    procedure PressStop;
   end;
 
 resourcestring
@@ -50,172 +35,87 @@ resourcestring
   rsSpRemaining = '%d remaining.';
   rsSpStopping = 'Stopping after the deletion in progress...';
   rsSpCurrent = 'Current: %s';
-  rsSpStop = 'Stop';
-  rsSpClose = 'Close';
   rsSpDone = 'Finished.';
   rsSpStopped = 'Stopped.';
 
 implementation
 
-uses
-  uTheme;
-
 constructor TSubtreeProgressDialog.CreateProgress(AOwner: TComponent; const ABaseDn, AServer,
   ABadge: string);
-var
-  lbl: TLabel;
 begin
-  inherited CreateDialog(AOwner, rsSpTitle, 640, 250);
+  inherited CreateProgress(AOwner, rsSpTitle, Format(rsSpBase, [ABaseDn]));
   SetIcon('trash');
   SetTarget(AServer, ABadge);
-  lbl := MakeLabel(Body, Format(rsSpBase, [ABaseDn]));
-  lbl.ShowAccelChar := False;
-  FPhase := MakeLabel(Body, rsSpEnumerating);
-  FPhase.WordWrap := True;
-  FBar := TProgressBar.Create(Body);
-  FBar.Parent := Body;
-  FBar.Align := alTop;
-  FBar.Height := 18;
-  FBar.BorderSpacing.Around := 6;
-  FBar.Min := 0;
-  FBar.Max := 1;
-  FDetail := MakeLabel(Body, '');
-  FDetail.WordWrap := True;
-  FCurrent := MakeLabel(Body, '');
-  FCurrent.ShowAccelChar := False;
-  FCurrent.WordWrap := True;
-  FStop := AddButton(rsSpStop, mrNone);
-  FStop.OnClick := @StopClick;
-  FClose := AddButton(rsSpClose, mrNone);
-  FClose.OnClick := @CloseClick;
-  FClose.Enabled := False;
-  OnCloseQuery := @CloseQueryHandler;
-  FRunning := True;
+  StatusText := rsSpEnumerating;
+  StoppingText := rsSpStopping;
   ApplyTheme;
 end;
 
 procedure TSubtreeProgressDialog.UpdateFrom(ASubtree: TSubtreeDeletion);
 var
   total: Integer;
+
+  // Cibles encore inconnues: la jauge garde son echelle.
+  procedure Bar(APosition: Integer);
+  begin
+    if total > 0 then SetProgress(APosition, total) else SetProgress(APosition, Gauge.Max);
+  end;
+
 begin
   total := ASubtree.Targets.Count;
-  FCurrent.Caption := '';
+  CurrentText := '';
   case ASubtree.State of
     sdsEnumerating:
       begin
-        FPhase.Caption := rsSpEnumerating;
-        FDetail.Caption := Format(rsSpFound, [ASubtree.Found]);
-        FBar.Style := pbstMarquee;
+        StatusText := rsSpEnumerating;
+        DetailText := Format(rsSpFound, [ASubtree.Found]);
+        SetIndeterminate;
       end;
     sdsAwaitingConfirm:
       begin
-        FPhase.Caption := Format(rsSpAwaiting, [total]);
-        FDetail.Caption := '';
-        FBar.Style := pbstNormal;
-        FBar.Max := 1;
-        FBar.Position := 0;
+        StatusText := Format(rsSpAwaiting, [total]);
+        DetailText := '';
+        SetProgress(0, 1);
       end;
     sdsAwaitingUnprotected:
       begin
-        FPhase.Caption := Format(rsSpAwaitingUnprotected, [ASubtree.PendingUnprotected]);
-        FDetail.Caption := '';
-        FBar.Style := pbstNormal;
-        if total > 0 then FBar.Max := total;
-        FBar.Position := 0;
+        StatusText := Format(rsSpAwaitingUnprotected, [ASubtree.PendingUnprotected]);
+        DetailText := '';
+        Bar(0);
       end;
     sdsVerifying:
       begin
-        FPhase.Caption := rsSpVerifying;
-        FDetail.Caption := Format(rsSpVerifyFound, [ASubtree.Found, total]);
-        FBar.Style := pbstNormal;
-        if total > 0 then FBar.Max := total;
-        FBar.Position := ASubtree.Found;
+        StatusText := rsSpVerifying;
+        DetailText := Format(rsSpVerifyFound, [ASubtree.Found, total]);
+        Bar(ASubtree.Found);
       end;
     sdsDeleting:
       begin
         if ASubtree.StopRequested then
-          FPhase.Caption := rsSpStopping
+          StatusText := rsSpStopping
         else
-          FPhase.Caption := Format(rsSpDeleting, [ASubtree.Deleted, total]);
-        FDetail.Caption := Format(rsSpRemaining, [ASubtree.Remaining]);
-        FBar.Style := pbstNormal;
-        if total > 0 then FBar.Max := total;
-        FBar.Position := ASubtree.Deleted;
+          StatusText := Format(rsSpDeleting, [ASubtree.Deleted, total]);
+        DetailText := Format(rsSpRemaining, [ASubtree.Remaining]);
+        Bar(ASubtree.Deleted);
         if ASubtree.CurrentDn <> '' then
-          FCurrent.Caption := Format(rsSpCurrent, [ASubtree.CurrentDn]);
+          CurrentText := Format(rsSpCurrent, [ASubtree.CurrentDn]);
       end;
-    sdsFinished, sdsStopped:
-      begin
-        FBar.Style := pbstNormal;
-        if total > 0 then FBar.Max := total;
-        FBar.Position := ASubtree.Deleted;
-      end;
+    sdsFinished, sdsStopped: Bar(ASubtree.Deleted);
   end;
-  FStop.Enabled := FRunning and not ASubtree.StopRequested;
+  StopEnabled := not ASubtree.StopRequested;
 end;
 
 procedure TSubtreeProgressDialog.Finish(const ASummary: string; AState: TUiState);
 begin
-  FRunning := False;
-  FBar.Style := pbstNormal;
   if AState = usOk then
-  begin
-    FPhase.Caption := rsSpDone;
-    FBar.Position := FBar.Max;
-  end
+    inherited Finish(rsSpDone, ASummary, AState)
   else
-    FPhase.Caption := rsSpStopped;
-  FDetail.Caption := ASummary;
-  FDetail.Font.Color := DialogStateColor(AState);
-  FCurrent.Caption := '';
-  FStop.Enabled := False;
-  FClose.Enabled := True;
-  if Showing and FClose.CanFocus then FClose.SetFocus;
-end;
-
-procedure TSubtreeProgressDialog.StopClick(Sender: TObject);
-begin
-  PressStop;
-end;
-
-procedure TSubtreeProgressDialog.PressStop;
-begin
-  if not FRunning or not FStop.Enabled then Exit;
-  FStop.Enabled := False;
-  FPhase.Caption := rsSpStopping;
-  if Assigned(FOnStop) then FOnStop(Self);
-end;
-
-procedure TSubtreeProgressDialog.CloseClick(Sender: TObject);
-begin
-  Close;
-end;
-
-procedure TSubtreeProgressDialog.CloseQueryHandler(Sender: TObject; var CanClose: Boolean);
-begin
-  // Fermer en pleine suppression vaut Stop. La fenetre reste pour le bilan: on ne cache pas les corps.
-  if FRunning then
-  begin
-    PressStop;
-    CanClose := False;
-  end
-  else
-    CanClose := True;
+    inherited Finish(rsSpStopped, ASummary, AState);
 end;
 
 function TSubtreeProgressDialog.PhaseText: string;
 begin
-  Result := FPhase.Caption;
-end;
-
-function TSubtreeProgressDialog.DetailText: string;
-begin
-  Result := FDetail.Caption;
-end;
-
-function TSubtreeProgressDialog.StopEnabled: Boolean;
-begin
-  Result := FStop.Enabled;
+  Result := StatusText;
 end;
 
 end.
