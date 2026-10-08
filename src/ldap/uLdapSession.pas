@@ -96,6 +96,7 @@ type
     function Compare(const ADn, AAttr: string; const AValue: RawByteString;
       ACancel: TCancelToken; out AMatch: Boolean): Boolean; override;
     function IsConnected: Boolean; override;
+    function KeepAlive(ACancel: TCancelToken): Boolean; override;
   end;
 
 implementation
@@ -587,6 +588,21 @@ end;
 function TLdapSession.IsConnected: Boolean;
 begin
   Result := (FLd <> nil) and (FState = csReady);
+end;
+
+// Lecture du root DSE sans attribut ("1.1"): le trafic minimal qui compte comme une operation
+// pour le delai d'inactivite du serveur. Une erreur reseau ferme le descripteur tout de suite,
+// l'etat devient csDisconnected au lieu d'un faux csReady.
+function TLdapSession.KeepAlive(ACancel: TCancelToken): Boolean;
+var
+  probe: TLdapEntry;
+begin
+  if not IsConnected then Exit(False);
+  probe := ReadEntry('', ['1.1'], ACancel, False);
+  Result := probe <> nil;
+  probe.Free;
+  if (not Result) and (FLastError.Category = lecNetwork) then
+    Close;
 end;
 
 function TLdapSession.WaitResult(AMsgId: Integer; ACancel: TCancelToken; ATimeoutMs: Int64;

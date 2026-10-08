@@ -924,6 +924,8 @@ begin
       end
       else
         Log(mlError, c.Profile.Name, ErrorToText(ev.Error) + ' ' + ev.Error.Action);
+    cekConnectionLost:
+      Log(mlError, c.Profile.Name, Format(rsConnectionLost, [ErrorToText(ev.Error)]));
     cekLdifSaved:
       begin
         Log(mlInfo, c.Profile.Name, ev.Summary);
@@ -962,7 +964,8 @@ begin
       else
         Log(mlWarning, c.Profile.Name, Format(rsSchemaKeptStale, [c.SchemaReason]));
   end;
-  if ev.Kind in [cekConnected, cekConnectFailed, cekLdifSaved, cekLdifSaveFailed] then
+  if ev.Kind in [cekConnected, cekConnectFailed, cekConnectionLost, cekLdifSaved,
+    cekLdifSaveFailed] then
   begin
     FTabBar.Invalidate;
     FSidebar.InvalidateTree;

@@ -184,6 +184,7 @@ begin
   Result.Add('connectTimeoutSec', AProfile.ConnectTimeoutSec);
   Result.Add('tlsTimeoutSec', AProfile.TlsTimeoutSec);
   Result.Add('operationTimeoutSec', AProfile.OperationTimeoutSec);
+  Result.Add('keepAliveSec', AProfile.KeepAliveSec);
   Result.Add('pageSize', AProfile.PageSize);
   Result.Add('sizeLimit', AProfile.SizeLimit);
   Result.Add('readOnly', AProfile.ReadOnly);
@@ -281,6 +282,7 @@ begin
     Result.ConnectTimeoutSec := GetInt(AObj, 'connectTimeoutSec', 10, 1, 600);
     Result.TlsTimeoutSec := GetInt(AObj, 'tlsTimeoutSec', 10, 1, 600);
     Result.OperationTimeoutSec := GetInt(AObj, 'operationTimeoutSec', 30, 1, 3600);
+    Result.KeepAliveSec := GetInt(AObj, 'keepAliveSec', 60, 0, 3600);
     Result.PageSize := GetInt(AObj, 'pageSize', 500, 0, 100000);
     Result.SizeLimit := GetInt(AObj, 'sizeLimit', 10000, 0, MaxInt);
     // Absent = lecture seule: dans le doute, on ne donne pas les cles.

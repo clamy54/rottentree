@@ -65,6 +65,9 @@ type
     ConnectTimeoutSec: Integer;
     TlsTimeoutSec: Integer;
     OperationTimeoutSec: Integer;
+    // Intervalle entre deux operations de maintien de session, 0 = desactive. Une lecture
+    // minuscule du root DSE remet a zero le compteur d'inactivite du serveur.
+    KeepAliveSec: Integer;
     PageSize: Integer;
     SizeLimit: Integer;
     ReadOnly: Boolean;
@@ -158,6 +161,7 @@ begin
   ConnectTimeoutSec := 10;
   TlsTimeoutSec := 10;
   OperationTimeoutSec := 30;
+  KeepAliveSec := 60;
   PageSize := 500;
   SizeLimit := 10000;
   ReadOnly := True;
@@ -205,6 +209,7 @@ begin
   ConnectTimeoutSec := ASource.ConnectTimeoutSec;
   TlsTimeoutSec := ASource.TlsTimeoutSec;
   OperationTimeoutSec := ASource.OperationTimeoutSec;
+  KeepAliveSec := ASource.KeepAliveSec;
   PageSize := ASource.PageSize;
   SizeLimit := ASource.SizeLimit;
   ReadOnly := ASource.ReadOnly;
@@ -456,6 +461,8 @@ begin
      (AProfile.TlsTimeoutSec < 1) or (AProfile.TlsTimeoutSec > 600) or
      (AProfile.OperationTimeoutSec < 1) or (AProfile.OperationTimeoutSec > 3600) then
     AddIssue(Result, pilError, 'timeouts', 'Timeouts are out of range.');
+  if (AProfile.KeepAliveSec < 0) or (AProfile.KeepAliveSec > 3600) then
+    AddIssue(Result, pilError, 'keepAlive', 'The keepalive interval must be between 0 and 3600 seconds.');
   if (AProfile.DerefAliases < 0) or (AProfile.DerefAliases > 3) then
     AddIssue(Result, pilError, 'aliases', 'Invalid alias policy.');
   if AProfile.Transport = tmPlain then

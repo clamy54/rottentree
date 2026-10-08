@@ -60,6 +60,9 @@ type
     function Compare(const ADn, AAttr: string; const AValue: RawByteString;
       ACancel: TCancelToken; out AMatch: Boolean): Boolean; virtual; abstract;
     function IsConnected: Boolean; virtual; abstract;
+    // Maintien de session: une operation minuscule qui remet a zero le compteur d'inactivite
+    // du serveur. Faux si la session s'avere morte; sans objet hors serveur LDAP.
+    function KeepAlive(ACancel: TCancelToken): Boolean; virtual;
     property State: TConnState read FState;
     property Transport: TTransportInfo read FTransport;
     property LastError: TLdapError read FLastError;
@@ -97,6 +100,11 @@ begin
   FSensitive.Free;
   FProfile.Free;
   inherited Destroy;
+end;
+
+function TDirectorySession.KeepAlive(ACancel: TCancelToken): Boolean;
+begin
+  Result := True;
 end;
 
 end.

@@ -104,7 +104,7 @@ uses
   uTheme, uUiKit, uPwdCore, uPasswordSchemes, uUiInbox, uDirectoryWorker, uLdapErrors, uChangeSet,
   uConnectionProfile, uCancel, uRtBytes, uSearchModel, uPasswordWork,
   uAccountState, uRtCombo, uServerKind, uPasswordEntryState, uDirectoryService, uRtList, uRtMessage,
-  uTaskTracker, uTaskDialog, uRtSecretEdit;
+  uTaskTracker, uTaskDialog, uRtSecretEdit, uRtButton;
 
 resourcestring
   rsPwdSessionLost = 'The connection changed while the server was being consulted: the outcome is ' +
@@ -144,6 +144,7 @@ type
     procedure ShowVerifyResult(const r: TPwdMultiResult);
     procedure TestClick(Sender: TObject);
     function StartCompute: Boolean;
+    procedure RevealToggle(Sender: TObject);
     procedure SetClick(Sender: TObject);
     procedure ComputeClick(Sender: TObject);
     procedure SchemeChange(Sender: TObject);
@@ -157,6 +158,7 @@ type
     procedure LocalMessage(AMsg: TUiMessage);
     procedure TaskMessage(AMsg: TUiMessage; const ATask: TTrackedTask; AEnding: TTaskEnding);
     function PasswordEdit(AParent: TWinControl; const ACaption: string): TRtSecretEdit;
+    function RevealableEdit(AParent: TWinControl; const ACaption: string): TRtSecretEdit;
     function ValueRow(AParent: TWinControl; const ACaption: string; AOnCopy: TNotifyEvent;
       out AEdit: TEdit): TPanel;
     procedure SetState(ALabel: TLabel; AState: TUiState; const AText: string);
@@ -286,6 +288,35 @@ begin
   Result := MakeSecretRow(AParent, ACaption, 160);
 end;
 
+// Oeil a droite du champ: montre ou cache la saisie, pour la relire avant de l'envoyer.
+function TPasswordTools.RevealableEdit(AParent: TWinControl; const ACaption: string): TRtSecretEdit;
+var
+  btn: TRtFlatButton;
+begin
+  Result := MakeSecretRow(AParent, ACaption, 160);
+  btn := TRtFlatButton.Create(Result.Parent);
+  btn.Parent := TWinControl(Result.Parent);
+  btn.Align := alRight;
+  btn.BorderSpacing.Around := 2;
+  btn.Setup('eye', '');
+  btn.Tag := PtrInt(Result);
+  btn.OnClick := @RevealToggle;
+end;
+
+procedure TPasswordTools.RevealToggle(Sender: TObject);
+var
+  btn: TRtFlatButton;
+  edit: TRtSecretEdit;
+begin
+  btn := TRtFlatButton(Sender);
+  edit := TRtSecretEdit(btn.Tag);
+  edit.Revealed := not edit.Revealed;
+  if edit.Revealed then
+    btn.IconId := 'eye-off'
+  else
+    btn.IconId := 'eye';
+end;
+
 function TPasswordTools.ValueRow(AParent: TWinControl; const ACaption: string;
   AOnCopy: TNotifyEvent; out AEdit: TEdit): TPanel;
 begin
@@ -358,8 +389,8 @@ begin
   FScheme.OnChange := @SchemeChange;
   FGenNote := MakeLabel(p, '');
   SchemeChange(nil);
-  FGenEdit := PasswordEdit(p, rsPwdNewSecret);
-  FGenConfirm := PasswordEdit(p, rsPwdConfirm);
+  FGenEdit := RevealableEdit(p, rsPwdNewSecret);
+  FGenConfirm := RevealableEdit(p, rsPwdConfirm);
   FKeepValues := MakeCheck(p, rsPwdKeep);
   bar := MakePanel(p, alTop, 36);
   FSetButton := MakeButton(bar, rsPwdSet, @SetClick);

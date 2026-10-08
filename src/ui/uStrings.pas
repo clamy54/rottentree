@@ -133,6 +133,7 @@ resourcestring
   rsPlainWarningStatus = 'Unencrypted connection.';
   rsConnecting = 'Connecting to %s (%s)...';
   rsConnectedTo = 'Connected to %s - %s';
+  rsConnectionLost = 'Connection lost: %s. Connect again to resume.';
   rsSchemaLoaded = 'Schema loaded: %d attribute types, %d object classes.';
   rsSchemaKeptStale = 'The schema could not be read again (%s): the previous one is kept, marked outdated.';
   rsNotConnected = 'Not connected.';

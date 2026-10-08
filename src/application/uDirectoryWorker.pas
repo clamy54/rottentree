@@ -53,7 +53,10 @@ type
     destructor Destroy; override;
   end;
 
-  TDisconnectedMsg = class(TUiMessage);
+  TDisconnectedMsg = class(TUiMessage)
+  public
+    Error: TLdapError;
+  end;
 
   TEntriesMsg = class(TUiMessage)
   public
@@ -250,6 +253,33 @@ implementation
 
 uses
   uSchemaReader, uRtBytes, uSensitive, uLdapSession, uLdifSession;
+
+type
+  // Emise par le fil lui-meme quand la session est restee inactive: personne n'attend son
+  // resultat, seule une deconnexion averee est signalee.
+  TKeepAliveCmd = class(TWorkerCommand)
+  public
+    procedure Execute(AWorker: TDirectoryWorker); override;
+    procedure Fail(AWorker: TDirectoryWorker; const AText: string); override;
+  end;
+
+procedure TKeepAliveCmd.Execute(AWorker: TDirectoryWorker);
+var
+  m: TDisconnectedMsg;
+begin
+  if AWorker.Session.KeepAlive(Cancel) then Exit;
+  // Echec passager (annulation, delai depasse) avec une session encore ouverte: rien a dire.
+  if AWorker.Session.IsConnected then Exit;
+  m := TDisconnectedMsg.Create;
+  AWorker.Stamp(m, Self);
+  m.Error := AWorker.Session.LastError;
+  UiInbox.Post(m);
+end;
+
+procedure TKeepAliveCmd.Fail(AWorker: TDirectoryWorker; const AText: string);
+begin
+  // Rien: aucune vue n'attend ce resultat.
+end;
 
 constructor TWorkerCommand.Create(AOwner: Pointer);
 begin
@@ -502,12 +532,14 @@ procedure TDirectoryWorker.Run;
 var
   cmd: TWorkerCommand;
   l: TList;
+  lastUseMs: Int64;
 begin
   if FProfile.LdifPath <> '' then
     FSession := TLdifSession.Create(FProfile, FSessionId, FGeneration)
   else
     FSession := TLdapSession.Create(FProfile, FSessionId, FGeneration);
   FSession.OnStep := @OnStep;
+  lastUseMs := MonotonicMs;
   try
     while not (Terminated or StopRequested) do
     begin
@@ -529,6 +561,16 @@ begin
       end;
       if cmd = nil then
       begin
+        // Session inactive trop longtemps: un maintien passe par la file comme toute commande,
+        // donc annulable et execute avant la prochaine vraie commande ou presque. Son message
+        // appartient au proprietaire de la connexion, sinon il partirait au puits des orphelins.
+        if (FProfile.KeepAliveSec > 0) and (FProfile.LdifPath = '') and FSession.IsConnected and
+           (MonotonicMs - lastUseMs >= Int64(FProfile.KeepAliveSec) * 1000) then
+        begin
+          lastUseMs := MonotonicMs;
+          Enqueue(TKeepAliveCmd.Create(FStepOwner));
+          Continue;
+        end;
         RTLEventWaitFor(FWake, 500);
         Continue;
       end;
@@ -548,6 +590,7 @@ begin
         FCurrent := nil;
         LeaveCriticalSection(FCurrentLock);
         cmd.Free;
+        lastUseMs := MonotonicMs;
       end;
     end;
   finally

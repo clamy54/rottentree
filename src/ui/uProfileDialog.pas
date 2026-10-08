@@ -76,6 +76,7 @@ resourcestring
   rsConnectTimeout = 'Connection timeout (s)';
   rsTlsTimeout = 'TLS timeout (s)';
   rsOpTimeout = 'Operation timeout (s)';
+  rsKeepAlive = 'Keepalive interval (s, 0 = disabled)';
   rsPageSize = 'Page size';
   rsSizeLimit = 'Interactive size limit';
   rsAliases = 'Alias dereferencing';
@@ -111,7 +112,7 @@ type
     FClientCert, FClientKey: TEdit;
     FBaseList: TListBox;
     FBaseStatus: TLabel;
-    FConnectTimeout, FTlsTimeout, FOpTimeout, FPageSize, FSizeLimit: TEdit;
+    FConnectTimeout, FTlsTimeout, FOpTimeout, FKeepAlive, FPageSize, FSizeLimit: TEdit;
     FSteps: TRtListGrid;
     FPlainWarning: TLabel;
     FSecretHint, FAuthzHint: TLabel;
@@ -349,6 +350,7 @@ begin
   FConnectTimeout := EditRow(AParent, rsConnectTimeout);
   FTlsTimeout := EditRow(AParent, rsTlsTimeout);
   FOpTimeout := EditRow(AParent, rsOpTimeout);
+  FKeepAlive := EditRow(AParent, rsKeepAlive);
   FPageSize := EditRow(AParent, rsPageSize);
   FSizeLimit := EditRow(AParent, rsSizeLimit);
   FAliases := ComboRow(AParent, rsAliases, ['never', 'searching', 'finding', 'always']);
@@ -408,6 +410,7 @@ begin
     FConnectTimeout.Text := IntToStr(FProfile.ConnectTimeoutSec);
     FTlsTimeout.Text := IntToStr(FProfile.TlsTimeoutSec);
     FOpTimeout.Text := IntToStr(FProfile.OperationTimeoutSec);
+    FKeepAlive.Text := IntToStr(FProfile.KeepAliveSec);
     FPageSize.Text := IntToStr(FProfile.PageSize);
     FSizeLimit.Text := IntToStr(FProfile.SizeLimit);
     FAliases.ItemIndex := FProfile.DerefAliases;
@@ -451,6 +454,7 @@ begin
   AProfile.ConnectTimeoutSec := StrToIntDef(FConnectTimeout.Text, 10);
   AProfile.TlsTimeoutSec := StrToIntDef(FTlsTimeout.Text, 10);
   AProfile.OperationTimeoutSec := StrToIntDef(FOpTimeout.Text, 30);
+  AProfile.KeepAliveSec := StrToIntDef(FKeepAlive.Text, 60);
   AProfile.PageSize := StrToIntDef(FPageSize.Text, 500);
   AProfile.SizeLimit := StrToIntDef(FSizeLimit.Text, 10000);
   AProfile.DerefAliases := FAliases.ItemIndex;

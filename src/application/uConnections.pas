@@ -59,8 +59,8 @@ type
     property Generation: Int64 read FGeneration;
   end;
 
-  TConnectionEventKind = (cekNone, cekStepFailed, cekConnected, cekConnectFailed, cekSchema,
-    cekSchemaFailed, cekLdifSaved, cekLdifSaveFailed);
+  TConnectionEventKind = (cekNone, cekStepFailed, cekConnected, cekConnectFailed,
+    cekConnectionLost, cekSchema, cekSchemaFailed, cekLdifSaved, cekLdifSaveFailed);
 
   TConnectionEvent = record
     Kind: TConnectionEventKind;
@@ -491,6 +491,19 @@ begin
       c.State := csFailed;
       AEvent.Kind := cekConnectFailed;
       AEvent.Error := cm.Error;
+    end;
+    Exit(True);
+  end;
+  // Session fermee par le serveur ou le reseau, constatee par le maintien de session: l'etat
+  // change tout de suite au lieu d'attendre l'echec de la prochaine commande.
+  if AMsg is TDisconnectedMsg then
+  begin
+    if c.State = csReady then
+    begin
+      c.State := csDisconnected;
+      c.LastError := TDisconnectedMsg(AMsg).Error;
+      AEvent.Kind := cekConnectionLost;
+      AEvent.Error := TDisconnectedMsg(AMsg).Error;
     end;
     Exit(True);
   end;
