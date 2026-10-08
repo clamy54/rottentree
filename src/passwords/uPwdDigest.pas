@@ -223,7 +223,8 @@ function TCleartextScheme.Generate(const APassword: RawByteString;
   const AParams: TPwdGenParams): RawByteString;
 begin
   if LooksLikeSchemePrefix(APassword) then
-    raise Exception.Create('a cleartext value starting with a scheme prefix would be ambiguous');
+    raise Exception.Create('a cleartext value starting with a scheme prefix would be ambiguous: ' +
+      'pick that format instead (SASL for a {SASL} identity)');
   Result := APassword;
 end;
 

@@ -111,8 +111,9 @@ dialects of OpenLDAP and 389 DS, and `{ARGON2}` as OpenLDAP builds it with
 libargon2 or with libsodium, which do not accept the same values, and
 Rottentree tells you which one will choke on which. It also flags the values
 still sitting on a fast, unsalted or weak digest, so you know exactly which
-accounts to worry about, and roughly since which decade. Generates new ones. Decrypts nothing,
-since there is nothing to decrypt, which is the point. If you were hoping to
+accounts to worry about, and roughly since which decade. Generates new ones,
+`{SASL}` identities included. Decrypts nothing, since there is nothing to
+decrypt, which is the point. If you were hoping to
 recover the director's password, you have the wrong tool, and possibly the
 wrong job.
 

@@ -110,8 +110,7 @@ begin
   Add(TDigestScheme.Create('SHA', '{SHA}', 'SHA1', 20, False, prLegacy));
   Add(TDigestScheme.Create('SMD5', '{SMD5}', 'MD5', 16, True, prLegacy));
   Add(TDigestScheme.Create('MD5', '{MD5}', 'MD5', 16, False, prLegacy));
-  Add(TReferenceScheme.Create('SASL', '{SASL}', '{SASL} pass-through authentication',
-    'not a hash: the server delegates authentication to SASL', prReference));
+  Add(TSaslScheme.Create);
   Add(TReferenceScheme.Create('PBKDF2_SHA256-389', '{PBKDF2_SHA256}',
     '389 Directory Server PBKDF2_SHA256',
     'binary 389 DS dialect is recognised; local verification is not qualified', prUnsupported));
@@ -134,6 +133,7 @@ begin
   FGenerators.Add(TCryptScheme.Create(sfDes));
   FGenerators.Add(TDigestScheme.Create('SHA', '{SHA}', 'SHA1', 20, False, prLegacy));
   FGenerators.Add(TDigestScheme.Create('MD5', '{MD5}', 'MD5', 16, False, prLegacy));
+  FGenerators.Add(TSaslScheme.Create);
   FGenerators.Add(TCleartextScheme.Create);
 end;
 

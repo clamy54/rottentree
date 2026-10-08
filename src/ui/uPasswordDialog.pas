@@ -27,6 +27,7 @@ resourcestring
   rsPwdAdTab = 'Active Directory';
   rsPwdSecret = 'Password';
   rsPwdNewSecret = 'New password';
+  rsPwdSaslIdentity = 'SASL identity';
   rsPwdConfirm = 'Confirm';
   rsPwdOld = 'Current password';
   rsPwdVerify = 'Check stored values';
@@ -46,6 +47,7 @@ resourcestring
   rsPwdCompute = 'Compute only';
   rsPwdComputed = 'Computed value';
   rsPwdEmpty = 'Type the new password.';
+  rsPwdSaslEmpty = 'Type the SASL identity (user@REALM).';
   rsPwdNoTarget = 'No entry to write to: the value can only be computed.';
   rsPwdCopy = 'Copy (cleared after 30 s)';
   rsPwdModifyIntro = 'Uses the Password Modify operation (RFC 3062): the server applies its own policy and storage format.';
@@ -125,8 +127,9 @@ type
       FAdOld: TRtSecretEdit;
     FGenValue, FModGenerated: TEdit;
     FVerifyResult, FGenResult, FModResult, FAdResult, FGenNote, FTestIntro,
-      FCannotChange: TLabel;
-    FModGenRow: TPanel;
+      FCannotChange, FGenLabel: TLabel;
+    FModGenRow, FGenConfirmRow: TPanel;
+    FGenEye, FGenConfirmEye: TRtFlatButton;
     FScheme: TRtComboBox;
     FGenerated, FServerGenerated: RawByteString;
     FModReset, FAdReset, FAdMustChange, FAdNeverExpires, FKeepValues: TRtCheckBox;
@@ -144,7 +147,9 @@ type
     procedure ShowVerifyResult(const r: TPwdMultiResult);
     procedure TestClick(Sender: TObject);
     function StartCompute: Boolean;
+    function SaslChosen: Boolean;
     procedure RevealToggle(Sender: TObject);
+    procedure ShowSecret(AEye: TRtFlatButton; AEdit: TRtSecretEdit; AShow: Boolean);
     procedure SetClick(Sender: TObject);
     procedure ComputeClick(Sender: TObject);
     procedure SchemeChange(Sender: TObject);
@@ -158,7 +163,8 @@ type
     procedure LocalMessage(AMsg: TUiMessage);
     procedure TaskMessage(AMsg: TUiMessage; const ATask: TTrackedTask; AEnding: TTaskEnding);
     function PasswordEdit(AParent: TWinControl; const ACaption: string): TRtSecretEdit;
-    function RevealableEdit(AParent: TWinControl; const ACaption: string): TRtSecretEdit;
+    function RevealableEdit(AParent: TWinControl; const ACaption: string;
+      out AEye: TRtFlatButton): TRtSecretEdit;
     function ValueRow(AParent: TWinControl; const ACaption: string; AOnCopy: TNotifyEvent;
       out AEdit: TEdit): TPanel;
     procedure SetState(ALabel: TLabel; AState: TUiState; const AText: string);
@@ -289,18 +295,26 @@ begin
 end;
 
 // Oeil a droite du champ: montre ou cache la saisie, pour la relire avant de l'envoyer.
-function TPasswordTools.RevealableEdit(AParent: TWinControl; const ACaption: string): TRtSecretEdit;
-var
-  btn: TRtFlatButton;
+function TPasswordTools.RevealableEdit(AParent: TWinControl; const ACaption: string;
+  out AEye: TRtFlatButton): TRtSecretEdit;
 begin
   Result := MakeSecretRow(AParent, ACaption, 160);
-  btn := TRtFlatButton.Create(Result.Parent);
-  btn.Parent := TWinControl(Result.Parent);
-  btn.Align := alRight;
-  btn.BorderSpacing.Around := 2;
-  btn.Setup('eye', '');
-  btn.Tag := PtrInt(Result);
-  btn.OnClick := @RevealToggle;
+  AEye := TRtFlatButton.Create(Result.Parent);
+  AEye.Parent := TWinControl(Result.Parent);
+  AEye.Align := alRight;
+  AEye.BorderSpacing.Around := 2;
+  AEye.Setup('eye', '');
+  AEye.Tag := PtrInt(Result);
+  AEye.OnClick := @RevealToggle;
+end;
+
+procedure TPasswordTools.ShowSecret(AEye: TRtFlatButton; AEdit: TRtSecretEdit; AShow: Boolean);
+begin
+  AEdit.Revealed := AShow;
+  if AShow then
+    AEye.IconId := 'eye-off'
+  else
+    AEye.IconId := 'eye';
 end;
 
 procedure TPasswordTools.RevealToggle(Sender: TObject);
@@ -310,11 +324,7 @@ var
 begin
   btn := TRtFlatButton(Sender);
   edit := TRtSecretEdit(btn.Tag);
-  edit.Revealed := not edit.Revealed;
-  if edit.Revealed then
-    btn.IconId := 'eye-off'
-  else
-    btn.IconId := 'eye';
+  ShowSecret(btn, edit, not edit.Revealed);
 end;
 
 function TPasswordTools.ValueRow(AParent: TWinControl; const ACaption: string;
@@ -388,9 +398,13 @@ begin
   if FScheme.ItemIndex < 0 then FScheme.ItemIndex := 0;
   FScheme.OnChange := @SchemeChange;
   FGenNote := MakeLabel(p, '');
+  FGenEdit := RevealableEdit(p, rsPwdNewSecret, FGenEye);
+  for i := 0 to FGenEdit.Parent.ControlCount - 1 do
+    if FGenEdit.Parent.Controls[i] is TLabel then
+      FGenLabel := TLabel(FGenEdit.Parent.Controls[i]);
+  FGenConfirm := RevealableEdit(p, rsPwdConfirm, FGenConfirmEye);
+  FGenConfirmRow := TPanel(FGenConfirm.Parent);
   SchemeChange(nil);
-  FGenEdit := RevealableEdit(p, rsPwdNewSecret);
-  FGenConfirm := RevealableEdit(p, rsPwdConfirm);
   FKeepValues := MakeCheck(p, rsPwdKeep);
   bar := MakePanel(p, alTop, 36);
   FSetButton := MakeButton(bar, rsPwdSet, @SetClick);
@@ -602,15 +616,37 @@ begin
   WipeString(pw);
 end;
 
+function TPasswordTools.SaslChosen: Boolean;
+begin
+  Result := SameText(FScheme.Text, 'SASL');
+end;
+
 procedure TPasswordTools.SchemeChange(Sender: TObject);
 var
   sch: TPasswordScheme;
+  sasl: Boolean;
 begin
   sch := PasswordRegistry.FindById(FScheme.Text);
   if sch <> nil then
     FGenNote.Caption := sch.GenerationNote
   else
     FGenNote.Caption := '';
+  // {SASL} prend une identite, pas un secret: champ en clair, pas de confirmation. Ce qui
+  // etait tape pour l'autre format ne doit pas apparaitre d'un coup.
+  sasl := SaslChosen;
+  FGenEdit.Wipe;
+  FGenConfirm.Wipe;
+  if sasl then
+    FGenLabel.Caption := rsPwdSaslIdentity
+  else
+    FGenLabel.Caption := rsPwdNewSecret;
+  ShowSecret(FGenEye, FGenEdit, sasl);
+  ShowSecret(FGenConfirmEye, FGenConfirm, False);
+  if FGenConfirmRow.Visible = sasl then
+  begin
+    FGenConfirmRow.Visible := not sasl;
+    StackByCreation(TWinControl(FGenConfirmRow.Parent));
+  end;
 end;
 
 function TPasswordTools.StartCompute: Boolean;
@@ -621,10 +657,13 @@ begin
   if FGenTask <> 0 then Exit;
   if FGenEdit.IsEmpty then
   begin
-    SetState(FGenResult, usWarning, rsPwdEmpty);
+    if SaslChosen then
+      SetState(FGenResult, usWarning, rsPwdSaslEmpty)
+    else
+      SetState(FGenResult, usWarning, rsPwdEmpty);
     Exit;
   end;
-  if not FGenEdit.SameAs(FGenConfirm) then
+  if not SaslChosen and not FGenEdit.SameAs(FGenConfirm) then
   begin
     SetState(FGenResult, usError, rsPwdMismatch);
     Exit;
