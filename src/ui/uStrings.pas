@@ -58,6 +58,9 @@ resourcestring
   rsMenuLdifEditor = 'LDIF Editor';
   rsMenuEscape = 'DN and Filter Escaping...';
   rsMenuRootDse = 'Root DSE Inspector...';
+  rsMenuPasswordAudit = 'Weak Password Storage';
+  rsMenuDuplicateId = 'Duplicate Identifiers';
+  rsMenuHomonyms = 'Homonyms';
   rsMenuExportProfiles = 'Export Profiles...';
   rsMenuImportProfiles = 'Import Profiles...';
   rsMenuMonitor = 'Server Monitor';

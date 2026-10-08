@@ -5,7 +5,7 @@ unit uPwdDigest;
 {$mode objfpc}{$H+}
 
 // {MD5} {SMD5} {SHA} {SSHA} {SHA256}... (base64 du condensat et du sel) et valeurs en
-// clair sans prefixe. Des empreintes rapides: un GPU en fait son quatre-heures.
+// clair, avec ou sans prefixe. Des empreintes rapides: un GPU en fait son quatre-heures.
 
 interface
 
@@ -45,6 +45,28 @@ type
     function CanGenerate: Boolean; override;
     function Generate(const APassword: RawByteString; const AParams: TPwdGenParams): RawByteString; override;
     function GenerationNote: string; override;
+  end;
+
+  // Du clair avec une etiquette ({CLEAR}, {PLAIN}) ou un deguisement ({BASE64}): du clair.
+  TTaggedCleartextScheme = class(TPasswordScheme)
+  private
+    FId, FPrefix, FGenNote: string;
+    FBase64: Boolean;
+    FServers: TPwdServers;
+    function Decode(const AValue: RawByteString; out AClear: RawByteString): Boolean;
+  public
+    constructor Create(const AId, APrefix: string; AServers: TPwdServers; const AGenNote: string;
+      ABase64: Boolean = False);
+    function Id: string; override;
+    function DisplayName: string; override;
+    function Recommendation: TPwdRecommendation; override;
+    function Matches(const AValue: RawByteString): Boolean; override;
+    function Inspect(const AValue: RawByteString): TPwdInfo; override;
+    function Verify(const AValue, APassword: RawByteString; out ADetail: string): TPwdStatus; override;
+    function CanGenerate: Boolean; override;
+    function Generate(const APassword: RawByteString; const AParams: TPwdGenParams): RawByteString; override;
+    function GenerationNote: string; override;
+    function Servers: TPwdServers; override;
   end;
 
 implementation
@@ -118,6 +140,12 @@ var
   d, s: RawByteString;
 begin
   Result := BaseInfo(Self, FPrefix);
+  // Une passe de condensat, meme salee, se brute-force compte par compte au tarif GPU.
+  // Sans sel, MD5 et SHA-1 ne se cassent meme plus: ils se consultent.
+  if not FSalted and ((FAlgo = 'MD5') or (FAlgo = 'SHA1')) then
+    Result.Storage := pslBroken
+  else
+    Result.Storage := pslWeak;
   if not Decode(AValue, d, s) then
   begin
     Result.Valid := False;
@@ -127,8 +155,7 @@ begin
   end;
   if FSalted then
     Result.Params := Format('salt=%d bytes', [Length(s)]);
-  if FRec = prLegacy then
-    Result.Note := 'fast unsalted or weak digest; no adaptive cost';
+  Result.Note := 'one digest pass; no adaptive cost';
 end;
 
 function TDigestScheme.Verify(const AValue, APassword: RawByteString;
@@ -226,6 +253,118 @@ begin
     raise Exception.Create('a cleartext value starting with a scheme prefix would be ambiguous: ' +
       'pick that format instead (SASL for a {SASL} identity)');
   Result := APassword;
+end;
+
+constructor TTaggedCleartextScheme.Create(const AId, APrefix: string; AServers: TPwdServers;
+  const AGenNote: string; ABase64: Boolean);
+begin
+  inherited Create;
+  FId := AId;
+  FPrefix := APrefix;
+  FServers := AServers;
+  FGenNote := AGenNote;
+  FBase64 := ABase64;
+end;
+
+function TTaggedCleartextScheme.CanGenerate: Boolean;
+begin
+  Result := True;
+end;
+
+function TTaggedCleartextScheme.GenerationNote: string;
+begin
+  Result := FGenNote;
+end;
+
+function TTaggedCleartextScheme.Servers: TPwdServers;
+begin
+  Result := FServers;
+end;
+
+function TTaggedCleartextScheme.Generate(const APassword: RawByteString;
+  const AParams: TPwdGenParams): RawByteString;
+begin
+  if Length(APassword) > PWD_MAX_VALUE_BYTES then
+    raise Exception.Create('the password is too long');
+  if FBase64 then
+    Result := FPrefix + Base64EncodeStr(APassword)
+  else
+    Result := FPrefix + APassword;
+end;
+
+function TTaggedCleartextScheme.Id: string;
+begin
+  Result := FId;
+end;
+
+function TTaggedCleartextScheme.DisplayName: string;
+begin
+  if FBase64 then
+    Result := 'Base64-encoded cleartext ' + FPrefix
+  else
+    Result := 'Cleartext ' + FPrefix;
+end;
+
+function TTaggedCleartextScheme.Recommendation: TPwdRecommendation;
+begin
+  Result := prCleartext;
+end;
+
+function TTaggedCleartextScheme.Matches(const AValue: RawByteString): Boolean;
+var
+  rest: RawByteString;
+begin
+  Result := HasPrefix(AValue, FPrefix, rest);
+end;
+
+function TTaggedCleartextScheme.Decode(const AValue: RawByteString;
+  out AClear: RawByteString): Boolean;
+var
+  rest: RawByteString;
+begin
+  AClear := '';
+  if not HasPrefix(AValue, FPrefix, rest) then Exit(False);
+  if Length(rest) > PWD_MAX_VALUE_BYTES then Exit(False);
+  if FBase64 then
+    Result := Base64DecodeStrict(rest, AClear)
+  else
+  begin
+    AClear := rest;
+    Result := True;
+  end;
+end;
+
+function TTaggedCleartextScheme.Inspect(const AValue: RawByteString): TPwdInfo;
+var
+  clear: RawByteString;
+begin
+  Result := BaseInfo(Self, FPrefix);
+  if not Decode(AValue, clear) then
+  begin
+    Result.Valid := False;
+    Result.CanVerify := False;
+    Result.Note := 'malformed base64';
+  end
+  else if FBase64 then
+    Result.Note := 'stored in cleartext: base64 is an encoding, not a hash'
+  else
+    Result.Note := 'stored in cleartext behind a prefix';
+  WipeString(clear);
+end;
+
+function TTaggedCleartextScheme.Verify(const AValue, APassword: RawByteString;
+  out ADetail: string): TPwdStatus;
+var
+  clear: RawByteString;
+begin
+  ADetail := '';
+  if not Decode(AValue, clear) then
+  begin
+    ADetail := 'malformed value';
+    Exit(psInvalid);
+  end;
+  if ConstantTimeEquals(clear, APassword) then Result := psMatch else Result := psNoMatch;
+  WipeString(clear);
 end;
 
 end.

@@ -49,6 +49,9 @@ function VerifyArgon2Phc(const APhc, APassword: RawByteString; AProvider: TArgon
   out ADetail: string): TPwdStatus;
 function ParseArgon2Phc(const S: RawByteString; out A: TArgon2Parsed; out AErr: string): Boolean;
 function Argon2WithinBounds(const A: TArgon2Parsed): Boolean;
+// Plancher d'audit: 8 Mio de memoire, sel de 8 octets, empreinte de 16. En dessous, le
+// papier a en-tete d'Argon2 sur un calcul qui tient dans un cache L2.
+function Argon2BelowFloor(const A: TArgon2Parsed): Boolean;
 function Argon2VariantName(K: TArgon2Type): string;
 
 implementation
@@ -260,6 +263,11 @@ begin
   end;
 end;
 
+function Argon2BelowFloor(const A: TArgon2Parsed): Boolean;
+begin
+  Result := (A.Memory < 8192) or (A.Time < 1) or (Length(A.Salt) < 8) or (Length(A.Hash) < 16);
+end;
+
 function Argon2VariantName(K: TArgon2Type): string;
 begin
   case K of
@@ -318,7 +326,12 @@ begin
   if a.Kind <> atArgon2id then Result.Recommendation := prAcceptable;
   Result.Params := Format('v=%d,m=%d,t=%d,p=%d', [a.Version, a.Memory, a.Time, a.Parallelism]);
   Result.Note := Argon2SupportNote(Argon2ServerSupport(rest));
-  if not Argon2WithinBounds(a) then
+  if Argon2BelowFloor(a) then
+  begin
+    Result.Storage := pslWeak;
+    Result.Note := 'parameters below the audit floor; ' + Result.Note;
+  end
+  else if not Argon2WithinBounds(a) then
     Result.Note := 'parameters exceed the verification limits; ' + Result.Note;
 end;
 

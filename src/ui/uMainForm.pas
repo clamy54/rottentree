@@ -15,7 +15,7 @@ uses
   Dialogs, LCLType, LMessages, uAppContext, uConnections, uRtDocument, uConnectionProfile,
   uUiInbox, uDirectoryTab, uTabBar, uSearchModel,
   uLdapEntry, uStrings, uProfileCatalog, uProfileSidebar, uRtLogList, uRtStatusBar, uMenuBar,
-  uDocumentSave;
+  uDocumentSave, uScanTab;
 
 type
   TMainForm = class(TForm)
@@ -51,6 +51,7 @@ type
     FMiNewProfile, FMiEditProfile, FMiConnect, FMiDisconnect: TMenuItem;
     FLdifPaths, FLdifUuids: TStringList;
     FMiSaveLdif, FMiSaveLdifAs, FMiLdifSchemaFiles, FMiLdifSchemaFrom: TMenuItem;
+    FMiPasswordAudit, FMiDuplicateId, FMiHomonyms: TMenuItem;
     FLdifSaveTask: Int64;
     FLdifSaveDone, FLdifSaveOk: Boolean;
     procedure BuildMenu;
@@ -155,6 +156,11 @@ type
     procedure MonitorClick(Sender: TObject);
     procedure AdDomainClick(Sender: TObject);
     procedure RootDseClick(Sender: TObject);
+    procedure PasswordAuditClick(Sender: TObject);
+    procedure DuplicateIdClick(Sender: TObject);
+    procedure HomonymsClick(Sender: TObject);
+    function ScanConnection(AAllowAd: Boolean): TDirectoryConnection;
+    procedure OpenScanTab(AClass: TScanTabClass; AConn: TDirectoryConnection);
     procedure PreferencesClick(Sender: TObject);
     procedure AboutClick(Sender: TObject);
     procedure LicensesClick(Sender: TObject);
@@ -177,7 +183,10 @@ uses
   uDocumentCrypto, uSessionModel, uLdapErrors, uVersion, uCancel,
   uSearchTab, uLdifTab, uPasswordDialog, uCertDialog, uSchemaDialog, uToolsDialogs,
   uAboutDialog, uCompareTab, uRtBytes, uExportActions, uLdifExportDialog, uPasswordWork, uConnectFlow, uEntryTab,
-  uDirectoryService, uMonitorTab, uAdToolsDialog, uProfileExchangeDialog, uServerKind,
+  uDirectoryService, uMonitorTab, uPasswordAuditTab, uDuplicateIdTab, uHomonymTab,
+  uAdToolsDialog,
+  uProfileExchangeDialog,
+  uServerKind,
   uOwnedThread, uRtMessage, uSchemaFiles, uLdapSchema, uPickDialog;
 
 type
@@ -409,6 +418,10 @@ begin
   AddItem(m, rsMenuEscape, 0, @EscapeToolClick);
   AddItem(m, rsMenuRootDse, 0, @RootDseClick);
   AddItem(m, rsMenuCertificates, 0, @CertificateClick);
+  Sep(m);
+  FMiPasswordAudit := AddItem(m, rsMenuPasswordAudit, 0, @PasswordAuditClick);
+  FMiDuplicateId := AddItem(m, rsMenuDuplicateId, 0, @DuplicateIdClick);
+  FMiHomonyms := AddItem(m, rsMenuHomonyms, 0, @HomonymsClick);
 
   m := Root(rsMenuHelp);
   AddItem(m, rsMenuLicenses, 0, @LicensesClick);
@@ -572,7 +585,9 @@ begin
     else if FPages.Pages[i] is TCompareTab then
       TCompareTab(FPages.Pages[i]).ApplyTheme
     else if FPages.Pages[i] is TMonitorTab then
-      TMonitorTab(FPages.Pages[i]).ApplyTheme;
+      TMonitorTab(FPages.Pages[i]).ApplyTheme
+    else if FPages.Pages[i] is TScanTab then
+      TScanTab(FPages.Pages[i]).ApplyTheme;
   FTabBar.Invalidate;
   FSidebar.InvalidateTree;
   Invalidate;
@@ -871,6 +886,57 @@ begin
   FMiSaveLdifAs.Enabled := ready;
   FMiLdifSchemaFiles.Enabled := ready;
   FMiLdifSchemaFrom.Enabled := ready;
+  FMiPasswordAudit.Enabled := ScanConnection(False) <> nil;
+  FMiDuplicateId.Enabled := ScanConnection(True) <> nil;
+  FMiHomonyms.Enabled := FMiDuplicateId.Enabled;
+end;
+
+function TMainForm.ScanConnection(AAllowAd: Boolean): TDirectoryConnection;
+begin
+  Result := nil;
+  if FPages.ActivePage = nil then Exit;
+  Result := FCtx.Connections.Find(PageProfileUuid(FPages.ActivePage));
+  if (Result <> nil) and (not Result.IsReady or (not AAllowAd and
+     (EffectiveServerKind(Result.Profile, Result.RootDse) = pkActiveDirectory))) then
+    Result := nil;
+end;
+
+procedure TMainForm.OpenScanTab(AClass: TScanTabClass; AConn: TDirectoryConnection);
+var
+  i: Integer;
+  t: TScanTab;
+begin
+  if AConn = nil then Exit;
+  for i := 0 to FPages.PageCount - 1 do
+    if (FPages.Pages[i].ClassType = AClass) and
+       (TScanTab(FPages.Pages[i]).ProfileUuid = AConn.Profile.Uuid) then
+    begin
+      FPages.ActivePage := FPages.Pages[i];
+      UpdateDocumentState;
+      Exit;
+    end;
+  t := AClass.CreateFor(FPages, FCtx, AConn);
+  t.PageControl := FPages;
+  t.OnOpenEntry := @SearchOpenEntry;
+  FPages.ActivePage := t;
+  UpdateDocumentState;
+  t.Run;
+end;
+
+// Pas sur Active Directory: unicodePwd ne se lit jamais, et auditer du vide rassure a tort.
+procedure TMainForm.PasswordAuditClick(Sender: TObject);
+begin
+  OpenScanTab(TPasswordAuditTab, ScanConnection(False));
+end;
+
+procedure TMainForm.DuplicateIdClick(Sender: TObject);
+begin
+  OpenScanTab(TDuplicateIdTab, ScanConnection(True));
+end;
+
+procedure TMainForm.HomonymsClick(Sender: TObject);
+begin
+  OpenScanTab(THomonymTab, ScanConnection(True));
 end;
 
 procedure TMainForm.LdifModified(Sender: TObject);
@@ -1010,6 +1076,8 @@ begin
     Result := TEntryTab(APage).ProfileUuid
   else if APage is TMonitorTab then
     Result := TMonitorTab(APage).ProfileUuid
+  else if APage is TScanTab then
+    Result := TScanTab(APage).ProfileUuid
   else
     Result := '';
 end;

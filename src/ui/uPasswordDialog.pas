@@ -27,7 +27,6 @@ resourcestring
   rsPwdAdTab = 'Active Directory';
   rsPwdSecret = 'Password';
   rsPwdNewSecret = 'New password';
-  rsPwdSaslIdentity = 'SASL identity';
   rsPwdConfirm = 'Confirm';
   rsPwdOld = 'Current password';
   rsPwdVerify = 'Check stored values';
@@ -47,7 +46,7 @@ resourcestring
   rsPwdCompute = 'Compute only';
   rsPwdComputed = 'Computed value';
   rsPwdEmpty = 'Type the new password.';
-  rsPwdSaslEmpty = 'Type the SASL identity (user@REALM).';
+  rsPwdInputEmpty = 'The "%s" field is empty.';
   rsPwdNoTarget = 'No entry to write to: the value can only be computed.';
   rsPwdCopy = 'Copy (cleared after 30 s)';
   rsPwdModifyIntro = 'Uses the Password Modify operation (RFC 3062): the server applies its own policy and storage format.';
@@ -128,7 +127,8 @@ type
     FGenValue, FModGenerated: TEdit;
     FVerifyResult, FGenResult, FModResult, FAdResult, FGenNote, FTestIntro,
       FCannotChange, FGenLabel: TLabel;
-    FModGenRow, FGenConfirmRow: TPanel;
+    FModGenRow, FGenRow, FGenConfirmRow: TPanel;
+    FServer: TPwdServer;
     FGenEye, FGenConfirmEye: TRtFlatButton;
     FScheme: TRtComboBox;
     FGenerated, FServerGenerated: RawByteString;
@@ -147,7 +147,7 @@ type
     procedure ShowVerifyResult(const r: TPwdMultiResult);
     procedure TestClick(Sender: TObject);
     function StartCompute: Boolean;
-    function SaslChosen: Boolean;
+    function ChosenScheme: TPasswordScheme;
     procedure RevealToggle(Sender: TObject);
     procedure ShowSecret(AEye: TRtFlatButton; AEdit: TRtSecretEdit; AShow: Boolean);
     procedure SetClick(Sender: TObject);
@@ -195,6 +195,19 @@ begin
   if AEdit = nil then Exit;
   AEdit.Text := StringOfChar(' ', Length(AEdit.Text));
   AEdit.Text := '';
+end;
+
+// Un fichier LDIF ou un serveur non reconnu ne dit pas qui lira la valeur: tous les formats.
+function PwdServerOf(AConn: TDirectoryConnection): TPwdServer;
+begin
+  Result := pwsOther;
+  if (AConn = nil) or (AConn.Profile.LdifPath <> '') then Exit;
+  case EffectiveServerKind(AConn.Profile, AConn.RootDse) of
+    pkOpenLdap: Result := pwsOpenLdap;
+    pk389Ds: Result := pws389Ds;
+    pkApacheDs: Result := pwsApacheDs;
+    pkActiveDirectory: Result := pwsActiveDirectory;
+  end;
 end;
 
 function ShowPasswordTools(AOwner: TComponent; ACtx: TAppContext; AConn: TDirectoryConnection;
@@ -260,6 +273,7 @@ begin
   else
     InitTasks(ACtx, '');
   FState := TPwdEntryState.Create(AEntry);
+  FServer := PwdServerOf(AConn);
   Tasks.OnMessage := @TaskMessage;
   Tasks.OnUntracked := @LocalMessage;
   BuildUi((AConn <> nil) and
@@ -391,7 +405,7 @@ begin
   FScheme.Align := alLeft;
   FScheme.Width := 280;
   FScheme.BorderSpacing.Left := 3;
-  ids := PasswordRegistry.GeneratorIds;
+  ids := PasswordRegistry.GeneratorIds(FServer);
   for i := 0 to High(ids) do
     FScheme.Items.Add(ids[i]);
   FScheme.ItemIndex := FScheme.Items.IndexOf(DEFAULT_GENERATOR_ID);
@@ -399,6 +413,7 @@ begin
   FScheme.OnChange := @SchemeChange;
   FGenNote := MakeLabel(p, '');
   FGenEdit := RevealableEdit(p, rsPwdNewSecret, FGenEye);
+  FGenRow := TPanel(FGenEdit.Parent);
   for i := 0 to FGenEdit.Parent.ControlCount - 1 do
     if FGenEdit.Parent.Controls[i] is TLabel then
       FGenLabel := TLabel(FGenEdit.Parent.Controls[i]);
@@ -616,59 +631,65 @@ begin
   WipeString(pw);
 end;
 
-function TPasswordTools.SaslChosen: Boolean;
+function TPasswordTools.ChosenScheme: TPasswordScheme;
 begin
-  Result := SameText(FScheme.Text, 'SASL');
+  Result := PasswordRegistry.FindById(FScheme.Text);
 end;
 
 procedure TPasswordTools.SchemeChange(Sender: TObject);
 var
   sch: TPasswordScheme;
-  sasl: Boolean;
+  input: TPwdInput;
+  fieldLabel: string;
 begin
-  sch := PasswordRegistry.FindById(FScheme.Text);
+  sch := ChosenScheme;
+  input := pinSecret;
+  fieldLabel := '';
+  FGenNote.Caption := '';
   if sch <> nil then
-    FGenNote.Caption := sch.GenerationNote
-  else
-    FGenNote.Caption := '';
-  // {SASL} prend une identite, pas un secret: champ en clair, pas de confirmation. Ce qui
-  // etait tape pour l'autre format ne doit pas apparaitre d'un coup.
-  sasl := SaslChosen;
+  begin
+    FGenNote.Caption := sch.GenerationNote;
+    input := sch.Input;
+    fieldLabel := sch.InputLabel;
+  end;
+  if fieldLabel = '' then fieldLabel := rsPwdNewSecret;
+  // Une identite n'est pas un secret: champ en clair, pas de confirmation. Ce qui etait tape
+  // pour l'autre format ne doit pas apparaitre d'un coup.
   FGenEdit.Wipe;
   FGenConfirm.Wipe;
-  if sasl then
-    FGenLabel.Caption := rsPwdSaslIdentity
-  else
-    FGenLabel.Caption := rsPwdNewSecret;
-  ShowSecret(FGenEye, FGenEdit, sasl);
+  FGenLabel.Caption := fieldLabel;
+  ShowSecret(FGenEye, FGenEdit, input = pinIdentity);
   ShowSecret(FGenConfirmEye, FGenConfirm, False);
-  if FGenConfirmRow.Visible = sasl then
+  if (FGenRow.Visible <> (input <> pinNone)) or (FGenConfirmRow.Visible <> (input = pinSecret)) then
   begin
-    FGenConfirmRow.Visible := not sasl;
-    StackByCreation(TWinControl(FGenConfirmRow.Parent));
+    FGenRow.Visible := input <> pinNone;
+    FGenConfirmRow.Visible := input = pinSecret;
+    StackByCreation(TWinControl(FGenRow.Parent));
   end;
 end;
 
 function TPasswordTools.StartCompute: Boolean;
 var
   pw: RawByteString;
+  sch: TPasswordScheme;
 begin
   Result := False;
   if FGenTask <> 0 then Exit;
-  if FGenEdit.IsEmpty then
+  sch := ChosenScheme;
+  if sch = nil then Exit;
+  if (sch.Input <> pinNone) and FGenEdit.IsEmpty then
   begin
-    if SaslChosen then
-      SetState(FGenResult, usWarning, rsPwdSaslEmpty)
+    if sch.InputLabel <> '' then
+      SetState(FGenResult, usWarning, Format(rsPwdInputEmpty, [sch.InputLabel]))
     else
       SetState(FGenResult, usWarning, rsPwdEmpty);
     Exit;
   end;
-  if not SaslChosen and not FGenEdit.SameAs(FGenConfirm) then
+  if (sch.Input = pinSecret) and not FGenEdit.SameAs(FGenConfirm) then
   begin
     SetState(FGenResult, usError, rsPwdMismatch);
     Exit;
   end;
-  if PasswordRegistry.FindById(FScheme.Text) = nil then Exit;
   FGenEdit.GetSecret(pw);
   FGenEdit.Wipe;
   FGenConfirm.Wipe;

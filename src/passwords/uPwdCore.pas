@@ -39,6 +39,17 @@ type
   TPwdRecommendation = (prPreferred, prAcceptable, prLegacy, prCleartext,
     prReference, prUnsupported);
 
+  // pwsOther: serveur non reconnu, fichier LDIF, pas de connexion. Dans le doute tous les
+  // formats sont proposes: l'operateur est majeur, et le serveur dira non tout seul.
+  TPwdServer = (pwsOpenLdap, pws389Ds, pwsApacheDs, pwsActiveDirectory, pwsOther);
+  TPwdServers = set of TPwdServer;
+
+  TPwdInput = (pinSecret, pinIdentity, pinNone);
+
+  // pslDelegated: rien de sensible dans l'annuaire, le probleme est chez quelqu'un d'autre.
+  // pslUnknown: format non juge, ni accuse ni blanchi.
+  TPwdStorageLevel = (pslBroken, pslWeak, pslFair, pslStrong, pslDelegated, pslUnknown);
+
   TPwdInfo = record
     SchemeId: string;
     DisplayName: string;
@@ -48,6 +59,7 @@ type
     CanVerify: Boolean;
     CanGenerate: Boolean;
     Recommendation: TPwdRecommendation;
+    Storage: TPwdStorageLevel;
     Note: string;
   end;
 
@@ -74,10 +86,19 @@ type
     function Generate(const APassword: RawByteString;
       const AParams: TPwdGenParams): RawByteString; virtual;
     function GenerationNote: string; virtual;
+    function Servers: TPwdServers; virtual;
+    function Input: TPwdInput; virtual;
+    // Vide: libelle par defaut.
+    function InputLabel: string; virtual;
   end;
+
+const
+  PWD_ALL_SERVERS = [Low(TPwdServer)..High(TPwdServer)];
 
 function DefaultGenParams: TPwdGenParams;
 function PwdStatusText(AStatus: TPwdStatus): string;
+function PwdStorageText(ALevel: TPwdStorageLevel): string;
+function StorageOfRecommendation(ARec: TPwdRecommendation): TPwdStorageLevel;
 function HasPrefix(const AValue, APrefix: RawByteString; out ARest: RawByteString): Boolean;
 function BaseInfo(AScheme: TPasswordScheme; const APrefix: string): TPwdInfo;
 function RandomSalt(ACount: Integer): RawByteString;
@@ -98,6 +119,33 @@ begin
     psInvalid: Result := 'invalid value';
     psOutOfBounds: Result := 'parameters out of bounds';
     psTooLong: Result := 'password exceeds the format limit';
+  end;
+end;
+
+function PwdStorageText(ALevel: TPwdStorageLevel): string;
+begin
+  case ALevel of
+    pslBroken: Result := 'broken';
+    pslWeak: Result := 'weak';
+    pslFair: Result := 'fair';
+    pslStrong: Result := 'strong';
+    pslDelegated: Result := 'delegated';
+  else
+    Result := 'not judged';
+  end;
+end;
+
+// Point de depart, que chaque format rectifie: une recommandation n'est pas un verdict.
+function StorageOfRecommendation(ARec: TPwdRecommendation): TPwdStorageLevel;
+begin
+  case ARec of
+    prPreferred: Result := pslStrong;
+    prAcceptable: Result := pslFair;
+    prLegacy: Result := pslWeak;
+    prCleartext: Result := pslBroken;
+    prReference: Result := pslDelegated;
+  else
+    Result := pslUnknown;
   end;
 end;
 
@@ -137,6 +185,7 @@ begin
   Result.CanVerify := True;
   Result.CanGenerate := AScheme.CanGenerate;
   Result.Recommendation := AScheme.Recommendation;
+  Result.Storage := StorageOfRecommendation(Result.Recommendation);
   Result.Note := '';
 end;
 
@@ -153,6 +202,21 @@ begin
 end;
 
 function TPasswordScheme.GenerationNote: string;
+begin
+  Result := '';
+end;
+
+function TPasswordScheme.Servers: TPwdServers;
+begin
+  Result := PWD_ALL_SERVERS;
+end;
+
+function TPasswordScheme.Input: TPwdInput;
+begin
+  Result := pinSecret;
+end;
+
+function TPasswordScheme.InputLabel: string;
 begin
   Result := '';
 end;

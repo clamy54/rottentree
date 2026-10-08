@@ -77,8 +77,9 @@ type
   private
     FList: TObjectList;
     FNextGeneration: Int64;
-    procedure SubmitCommand(AConn: TDirectoryConnection; ACmd: TWorkerCommand);
   public
+    // La commande ne vous appartient plus au retour: relever son TaskId avant, pas apres.
+    procedure SubmitCommand(AConn: TDirectoryConnection; ACmd: TWorkerCommand);
     function ApplyMessage(AMsg: TUiMessage; AOwner: Pointer; ASensitive: TSensitivePolicy;
       out AEvent: TConnectionEvent): Boolean;
   public

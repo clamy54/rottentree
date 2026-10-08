@@ -53,7 +53,8 @@ end;
 
 function TPbkdf2Scheme.DisplayName: string;
 begin
-  Result := 'PBKDF2-HMAC-' + FAlgo + ' ' + FPrefix + ' (OpenLDAP pw-pbkdf2 / passlib)';
+  // La provenance (pw-pbkdf2, passlib) reste dans la note: une colonne n'est pas une notice.
+  Result := 'PBKDF2-HMAC-' + FAlgo + ' ' + FPrefix;
 end;
 
 function TPbkdf2Scheme.Recommendation: TPwdRecommendation;
@@ -86,12 +87,21 @@ begin
   Result := True;
 end;
 
+// Plancher d'audit: le dixieme des recommandations OWASP. En dessous, le compteur decore.
+function Pbkdf2IterationFloor(const AAlgo: string): Int64;
+begin
+  if AAlgo = 'SHA512' then Result := 21000
+  else if AAlgo = 'SHA256' then Result := 60000
+  else Result := 130000;
+end;
+
 function TPbkdf2Scheme.Inspect(const AValue: RawByteString): TPwdInfo;
 var
   it: Int64;
   s, dk: RawByteString;
 begin
   Result := BaseInfo(Self, FPrefix);
+  if FAlgo = 'SHA1' then Result.Storage := pslFair else Result.Storage := pslStrong;
   if not Parse(AValue, it, s, dk) then
   begin
     Result.Valid := False;
@@ -100,7 +110,12 @@ begin
     Exit;
   end;
   Result.Params := Format('iterations=%d, salt=%d bytes', [it, Length(s)]);
-  if it > PWD_PBKDF2_MAX_ITERATIONS then
+  if (it < Pbkdf2IterationFloor(FAlgo)) or (Length(s) < 8) then
+  begin
+    Result.Storage := pslWeak;
+    Result.Note := 'parameters below the audit floor';
+  end
+  else if it > PWD_PBKDF2_MAX_ITERATIONS then
     Result.Note := 'iterations exceed the verification limit';
 end;
 

@@ -4,9 +4,10 @@ unit uPwdReference;
 
 {$mode objfpc}{$H+}
 
-// Formats reconnus sans verification locale ({SASL}, dialectes 389 DS, prefixes
-// inconnus): valeur conservee telle quelle. On ne touche pas a ce qu'on ne comprend
-// pas. {SASL} se genere quand meme: ce n'est qu'une identite a prefixer.
+// Formats reconnus sans verification locale ({SASL} et autres delegations, chiffrements
+// reversibles, cles TOTP, dialectes 389 DS, prefixes inconnus): valeur conservee telle
+// quelle. On ne touche pas a ce qu'on ne comprend pas. Les delegations se generent quand
+// meme: rien a calculer, un prefixe a poser.
 
 interface
 
@@ -18,8 +19,10 @@ type
   private
     FId, FPrefix, FName, FNote: string;
     FRec: TPwdRecommendation;
+    FStorage: TPwdStorageLevel;
   public
-    constructor Create(const AId, APrefix, AName, ANote: string; ARec: TPwdRecommendation);
+    constructor Create(const AId, APrefix, AName, ANote: string; ARec: TPwdRecommendation;
+      AStorage: TPwdStorageLevel);
     function Id: string; override;
     function DisplayName: string; override;
     function Recommendation: TPwdRecommendation; override;
@@ -28,20 +31,27 @@ type
     function Verify(const AValue, APassword: RawByteString; out ADetail: string): TPwdStatus; override;
   end;
 
-  TSaslScheme = class(TReferenceScheme)
+  // ALabel vide: rien a saisir, la valeur est le prefixe seul ({K5KEY}).
+  TDelegationScheme = class(TReferenceScheme)
+  private
+    FLabel, FGenNote: string;
   public
-    constructor Create;
+    constructor Create(const AId, APrefix, AName, ANote, ALabel, AGenNote: string);
     function CanGenerate: Boolean; override;
     function Generate(const AIdentity: RawByteString; const AParams: TPwdGenParams): RawByteString; override;
     function GenerationNote: string; override;
+    function Servers: TPwdServers; override;
+    function Input: TPwdInput; override;
+    function InputLabel: string; override;
   end;
 
 implementation
 
 constructor TReferenceScheme.Create(const AId, APrefix, AName, ANote: string;
-  ARec: TPwdRecommendation);
+  ARec: TPwdRecommendation; AStorage: TPwdStorageLevel);
 begin
   inherited Create;
+  FStorage := AStorage;
   FId := AId;
   FPrefix := APrefix;
   FName := AName;
@@ -85,6 +95,7 @@ begin
     Result.Prefix := Copy(AValue, 1, p);
   end;
   Result.CanVerify := False;
+  Result.Storage := FStorage;
   Result.Note := FNote;
 end;
 
@@ -95,38 +106,54 @@ begin
   Result := psUnverifiable;
 end;
 
-constructor TSaslScheme.Create;
+constructor TDelegationScheme.Create(const AId, APrefix, AName, ANote, ALabel, AGenNote: string);
 begin
-  inherited Create('SASL', '{SASL}', '{SASL} pass-through authentication',
-    'not a hash: the server delegates authentication to SASL', prReference);
+  inherited Create(AId, APrefix, AName, ANote, prReference, pslDelegated);
+  FLabel := ALabel;
+  FGenNote := AGenNote;
 end;
 
-function TSaslScheme.CanGenerate: Boolean;
+function TDelegationScheme.CanGenerate: Boolean;
 begin
   Result := True;
 end;
 
-function TSaslScheme.GenerationNote: string;
+function TDelegationScheme.GenerationNote: string;
 begin
-  Result := 'Stores {SASL}identity: the server hands the bind to its SASL stack (saslauthd, ' +
-    'Kerberos...). The identity is usually user@REALM; nothing is hashed.';
+  Result := FGenNote;
 end;
 
-function TSaslScheme.Generate(const AIdentity: RawByteString;
+function TDelegationScheme.Servers: TPwdServers;
+begin
+  Result := [pwsOpenLdap, pwsOther];
+end;
+
+function TDelegationScheme.Input: TPwdInput;
+begin
+  if FLabel = '' then Result := pinNone else Result := pinIdentity;
+end;
+
+function TDelegationScheme.InputLabel: string;
+begin
+  Result := FLabel;
+end;
+
+function TDelegationScheme.Generate(const AIdentity: RawByteString;
   const AParams: TPwdGenParams): RawByteString;
 var
   i: Integer;
 begin
+  if Input = pinNone then Exit(FPrefix);
   if AIdentity = '' then
-    raise Exception.Create('the SASL identity is empty');
+    raise Exception.Create('the identity is empty');
   if Length(AIdentity) > PWD_MAX_VALUE_BYTES then
-    raise Exception.Create('the SASL identity is too long');
+    raise Exception.Create('the identity is too long');
   if AIdentity[1] = '{' then
-    raise Exception.Create('the SASL identity is typed without any {scheme} prefix');
+    raise Exception.Create('the identity is typed without any {scheme} prefix');
   for i := 1 to Length(AIdentity) do
     if AIdentity[i] in [#0..#31, #127] then
-      raise Exception.Create('the SASL identity contains a control character');
-  Result := '{SASL}' + AIdentity;
+      raise Exception.Create('the identity contains a control character');
+  Result := FPrefix + AIdentity;
 end;
 
 end.

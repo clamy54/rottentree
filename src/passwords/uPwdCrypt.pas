@@ -251,16 +251,19 @@ begin
     Result.Valid := False;
     Result.CanVerify := False;
     Result.Recommendation := prUnsupported;
+    Result.Storage := pslUnknown;
     Result.Note := note;
     Exit;
   end;
   Result.Note := note;
+  Result.Storage := pslStrong;
   case fmt of
     sfDes:
       begin
         Result.SchemeId := 'CRYPT-DES';
         Result.DisplayName := '{CRYPT} DES (legacy)';
         Result.Recommendation := prLegacy;
+        Result.Storage := pslBroken;
         Result.Note := 'only the first 8 bytes of a password are used; 7-bit characters';
       end;
     sfMd5:
@@ -268,6 +271,7 @@ begin
         Result.SchemeId := 'CRYPT-MD5';
         Result.DisplayName := '{CRYPT} MD5-crypt $1$ (legacy)';
         Result.Recommendation := prLegacy;
+        Result.Storage := pslWeak;
       end;
     sfSha256, sfSha512:
       begin
@@ -282,7 +286,13 @@ begin
           Result.DisplayName := '{CRYPT} SHA-512-crypt $6$';
         end;
         Result.Params := 'rounds=' + IntToStr(rounds);
-        if rounds > PWD_SHACRYPT_MAX_ROUNDS then
+        // En dessous du defaut glibc, quelqu'un a reduit le cout a la main. Bravo.
+        if rounds < SHACRYPT_ROUNDS_DEFAULT then
+        begin
+          Result.Storage := pslWeak;
+          Result.Note := 'rounds below the audit floor';
+        end
+        else if rounds > PWD_SHACRYPT_MAX_ROUNDS then
           Result.Note := 'rounds exceed the verification limit';
       end;
     sfBcrypt:
@@ -291,7 +301,12 @@ begin
         Result.DisplayName := '{CRYPT} bcrypt ' + Copy(rest, 1, 4);
         Result.Params := 'cost=' + IntToStr(rounds);
         Result.Note := 'passwords longer than 72 bytes are refused, never truncated';
-        if rounds > PWD_BCRYPT_MAX_COST then
+        if rounds < 10 then
+        begin
+          Result.Storage := pslWeak;
+          Result.Note := 'cost below the audit floor';
+        end
+        else if rounds > PWD_BCRYPT_MAX_COST then
           Result.Note := 'cost exceeds the verification limit';
       end;
     sfArgon2:
@@ -302,11 +317,17 @@ begin
           Result.DisplayName := '{CRYPT} ' + Argon2VariantName(a.Kind);
           Result.Params := Format('v=%d,m=%d,t=%d,p=%d', [a.Version, a.Memory, a.Time, a.Parallelism]);
           if a.Kind = atArgon2id then Result.Recommendation := prPreferred;
+          if Argon2BelowFloor(a) then
+          begin
+            Result.Storage := pslWeak;
+            Result.Note := 'parameters below the audit floor';
+          end;
         end
         else
         begin
           Result.Valid := False;
           Result.CanVerify := False;
+          Result.Storage := pslUnknown;
           Result.Note := note;
         end;
       end;
@@ -314,6 +335,14 @@ begin
     begin
       Result.CanVerify := False;
       Result.Recommendation := prUnsupported;
+      // Pas verifiables ici, jugeables quand meme: inutile d'y gouter pour savoir que c'est
+      // perime.
+      case fmt of
+        sfBcrypt2x, sfYescrypt, sfGostYescrypt, sfScrypt: Result.Storage := pslStrong;
+        sfExtDes, sfSunMd5, sfSha1Crypt: Result.Storage := pslWeak;
+      else
+        Result.Storage := pslUnknown;
+      end;
     end;
   end;
 end;

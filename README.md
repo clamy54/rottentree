@@ -111,7 +111,15 @@ dialects of OpenLDAP and 389 DS, and `{ARGON2}` as OpenLDAP builds it with
 libargon2 or with libsodium, which do not accept the same values, and
 Rottentree tells you which one will choke on which. It also flags the values
 still sitting on a fast, unsalted or weak digest, so you know exactly which
-accounts to worry about, and roughly since which decade. Generates new ones,
+accounts to worry about, and roughly since which decade. It also names what
+was never a hash in the first place: identities handed to someone else
+(`{SASL}`, `{KERBEROS}`, `{UNIX}`, `{RADIUS}`, `{K5KEY}`), cleartext wearing a
+prefix (`{CLEAR}`, `{PLAIN}`, `{BASE64}`), reversible encryption and TOTP keys.
+A scan of the whole directory lists the accounts whose storage is broken or
+weak, exports them to CSV, and first says how many passwords it could actually
+read, because an empty list from an identity that cannot read `userPassword`
+proves nothing.
+Generates new ones,
 `{SASL}` identities included. Decrypts nothing, since there is nothing to
 decrypt, which is the point. If you were hoping to
 recover the director's password, you have the wrong tool, and possibly the
