@@ -49,6 +49,7 @@ resourcestring
   rsPwdInputEmpty = 'The "%s" field is empty.';
   rsPwdNoTarget = 'No entry to write to: the value can only be computed.';
   rsPwdCopy = 'Copy (cleared after 30 s)';
+  rsPwdCopyValue = 'Copy value';
   rsPwdModifyIntro = 'Uses the Password Modify operation (RFC 3062): the server applies its own policy and storage format.';
   rsPwdReset = 'Administrative reset';
   rsPwdChange = 'Change with current password';
@@ -105,7 +106,7 @@ uses
   uTheme, uUiKit, uPwdCore, uPasswordSchemes, uUiInbox, uDirectoryWorker, uLdapErrors, uChangeSet,
   uConnectionProfile, uCancel, uRtBytes, uSearchModel, uPasswordWork,
   uAccountState, uRtCombo, uServerKind, uPasswordEntryState, uDirectoryService, uRtList, uRtMessage,
-  uTaskTracker, uTaskDialog, uRtSecretEdit, uRtButton;
+  uTaskTracker, uTaskDialog, uRtSecretEdit, uRtButton, Menus, uMenuBar;
 
 resourcestring
   rsPwdSessionLost = 'The connection changed while the server was being consulted: the outcome is ' +
@@ -116,6 +117,7 @@ type
   private
     FState: TPwdEntryState;
     FValues: TRtListGrid;
+    FValuesMenu: TPopupMenu;
     FValuesNote: TLabel;
     FVerifyVersion: Integer;
     FVerdictShown: Boolean;
@@ -154,6 +156,9 @@ type
     procedure ComputeClick(Sender: TObject);
     procedure SchemeChange(Sender: TObject);
     procedure CopyText(const AText: string);
+    procedure ValuesMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState;
+      X, Y: Integer);
+    procedure CopyValueClick(Sender: TObject);
     procedure CopyComputedClick(Sender: TObject);
     procedure CopyServerClick(Sender: TObject);
     procedure WriteValue(AReplace: Boolean);
@@ -360,6 +365,7 @@ var
   ids: TStringArray;
   i: Integer;
   valuesLabel, setIntro: TLabel;
+  mi: TMenuItem;
 begin
   if FState.HasTarget then
     MakeLabel(Body, Format(rsPwdEntry, [FState.Dn]))
@@ -380,6 +386,12 @@ begin
   FValues.AddColumn(rsPwdScheme, 170);
   FValues.AddColumn('Parameters', 110);
   FValues.AddColumn('Notes', 170);
+  FValues.OnMouseDown := @ValuesMouseDown;
+  FValuesMenu := TPopupMenu.Create(Self);
+  mi := TMenuItem.Create(FValuesMenu);
+  mi.Caption := rsPwdCopyValue;
+  mi.OnClick := @CopyValueClick;
+  FValuesMenu.Items.Add(mi);
   FValuesNote := MakeLabel(Body, '');
   FValuesNote.Visible := False;
 
@@ -758,6 +770,34 @@ begin
   Clipboard.AsText := FClipText;
   FClipTimer.Enabled := False;
   FClipTimer.Enabled := True;
+end;
+
+// Clic droit sur une valeur: copie telle quelle, pour la passer a un outil externe. Meme
+// tempo que les autres copies (avertissement, effacement a 30 s).
+procedure TPasswordTools.ValuesMouseDown(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+var
+  c, r: Integer;
+begin
+  if Button <> mbRight then Exit;
+  FValues.MouseToCell(X, Y, c, r);
+  if (r < 1) or (r - 1 >= FValues.Count) then Exit;
+  FValues.Row := r;
+  ThemePopupMenu(FValuesMenu);
+  FValuesMenu.PopUp(Mouse.CursorPos.X, Mouse.CursorPos.Y);
+end;
+
+procedure TPasswordTools.CopyValueClick(Sender: TObject);
+var
+  a: TLdapAttribute;
+  idx: Integer;
+begin
+  if FState.Stale or (FState.Entry = nil) then Exit;
+  idx := FValues.ItemIndex;
+  if idx < 0 then Exit;
+  a := FState.Entry.Find('userPassword');
+  if (a = nil) or (idx >= a.ValueCount) then Exit;
+  CopyText(string(a.Values[idx]));
 end;
 
 procedure TPasswordTools.CopyComputedClick(Sender: TObject);

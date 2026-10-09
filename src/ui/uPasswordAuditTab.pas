@@ -11,13 +11,19 @@ unit uPasswordAuditTab;
 interface
 
 uses
-  Classes, SysUtils, uConnections, uRtCombo, uRtReport, uDirectoryWorker, uSafeOutput,
-  uScanTab, uPwdCore, uPasswordAudit;
+  Classes, SysUtils, StdCtrls, Forms, Dialogs, uConnections, uRtCombo, uRtReport,
+  uDirectoryWorker, uSafeOutput, uScanTab, uPwdCore, uPasswordAudit, uUiInbox, uAppContext,
+  uTaskTracker, uDirectoryOps, uSearchModel, uRtMessage, uLdapErrors;
 
 type
   TPasswordAuditTab = class(TScanTab)
   private
     FThreshold: TRtComboBox;
+    FCrackBtn: TButton;
+    FCrackTasks: TDirectoryTasks;
+    FCrackOwner: TObject;
+    FCrackRunning: Boolean;
+    FCrackPath: string;
     FRows: TPwdAuditRows;
     FRowCount: Integer;
     FShown: array of Integer;
@@ -27,6 +33,8 @@ type
     FFormats: TPwdAuditFormats;
     function LevelShown: Boolean;
     procedure ThresholdChange(Sender: TObject);
+    procedure CrackExportClick(Sender: TObject);
+    procedure CrackMessage(AMsg: TUiMessage; const ATask: TTrackedTask; AEnding: TTaskEnding);
     function Wanted(ALevel: TPwdStorageLevel): Boolean;
     procedure AddShown(AFrom: Integer);
     function BreakdownText: string;
@@ -45,6 +53,11 @@ type
     function CoverageWarning: string; override;
     function ExportCount: Int64; override;
     function ExportRows(ACsv: TCsvWriter): Int64; override;
+    procedure UpdateView; override;
+  public
+    constructor CreateFor(AOwner: TComponent; ACtx: TAppContext;
+      AConn: TDirectoryConnection); override;
+    destructor Destroy; override;
   end;
 
 implementation
@@ -70,6 +83,18 @@ resourcestring
   rsAuditListed = '%d accounts listed.';
   rsAuditDropped = '%d more accounts are counted above but not kept: the list stops at %d.';
   rsAuditNoAccounts = 'No account entry was returned: wrong base, or this identity cannot see them.';
+  rsAuditCrackBtn = 'Export for John...';
+  rsAuditCrackSave = 'John/hashcat hash list (*.txt)|*.txt|All files|*.*';
+  rsAuditCrackBusy = 'A hash export is already running. Wait for it to finish.';
+  rsAuditCrackNoConn = 'Not connected: there is nothing to read again.';
+  rsAuditCrackDone = '%d hashes from %d accounts written to %s (%s). John detects the formats; ' +
+    'hashcat needs one mode per hash type, so split the file by format first.';
+  rsAuditCrackEmpty = 'No crackable hash was written: the readable values are cleartext, delegated ' +
+    'to SASL, or of an unknown format. Nothing to feed a cracker.';
+  rsAuditCrackFailed = 'Hash export failed: %s';
+  rsAuditCrackLost = 'the connection changed during the export; run it again';
+  rsAuditCrackComplete = 'complete coverage';
+  rsAuditCrackPartial = 'partial coverage';
   rsAuditNoneReadable = 'NO userPassword COULD BE READ: this identity probably lacks the right to ' +
     'read them. Nothing can be concluded about how passwords are stored.';
   rsAuditSomeUnread = '%d of %d accounts returned no userPassword: unreadable for this identity, ' +
@@ -82,8 +107,132 @@ end;
 
 procedure TPasswordAuditTab.BuildBarExtras(AView: TRtReportView);
 begin
+  FCrackBtn := AView.AddButton(rsAuditCrackBtn, @CrackExportClick);
   FThreshold := AView.AddChoice(rsAuditShow, [rsAuditBroken, rsAuditWeak, rsAuditAll],
     @ThresholdChange, 230);
+end;
+
+const
+  CRACK_TAG = 'crackexport';
+
+constructor TPasswordAuditTab.CreateFor(AOwner: TComponent; ACtx: TAppContext;
+  AConn: TDirectoryConnection);
+begin
+  FCrackOwner := TObject.Create;
+  inherited CreateFor(AOwner, ACtx, AConn);
+  // Jeton proprietaire distinct: l'inbox ne garde qu'un abonne par pointeur, deux trackers sur
+  // le meme owner s'evinceraient.
+  FCrackTasks := TDirectoryTasks.Create(FCtx.Connections, FProfileUuid, Pointer(FCrackOwner));
+  FCrackTasks.OnMessage := @CrackMessage;
+end;
+
+destructor TPasswordAuditTab.Destroy;
+begin
+  if FCrackTasks <> nil then FCrackTasks.Cancel(CRACK_TAG);
+  FreeAndNil(FCrackTasks);
+  FreeAndNil(FCrackOwner);
+  inherited Destroy;
+end;
+
+procedure TPasswordAuditTab.UpdateView;
+begin
+  inherited UpdateView;
+  if FCrackBtn <> nil then
+    FCrackBtn.Enabled := (FState <> scsRunning) and not FCrackRunning and (ExportCount > 0);
+end;
+
+procedure TPasswordAuditTab.CrackExportClick(Sender: TObject);
+var
+  sd: TSaveDialog;
+  c: TDirectoryConnection;
+  cmd: TPwdCrackExportCmd;
+  bases: TStringArray;
+  id: Int64;
+begin
+  if FState = scsRunning then Exit;
+  if FCrackRunning or FCrackTasks.Pending(CRACK_TAG) then
+  begin
+    RtMessageDlg(Caption, rsAuditCrackBusy, mtInformation, [mbOK], 0);
+    Exit;
+  end;
+  if ExportCount = 0 then Exit;
+  c := FCrackTasks.Conn;
+  if c = nil then
+  begin
+    RtMessageDlg(Caption, rsAuditCrackNoConn, mtWarning, [mbOK], 0);
+    Exit;
+  end;
+  bases := ScanBases(c);
+  if Length(bases) = 0 then Exit;
+  sd := TSaveDialog.Create(GetParentForm(Self));
+  try
+    sd.Filter := rsAuditCrackSave;
+    sd.DefaultExt := 'txt';
+    sd.Options := sd.Options + [ofOverwritePrompt];
+    if not sd.Execute then Exit;
+    FCrackPath := sd.FileName;
+  finally
+    sd.Free;
+  end;
+  cmd := TPwdCrackExportCmd.Create(Pointer(FCrackOwner));
+  cmd.Bases := bases;
+  cmd.PageSize := c.Profile.PageSize;
+  cmd.Filter := PwdAuditFilter(c.Schema);
+  cmd.FilePath := FCrackPath;
+  id := cmd.TaskId;
+  FCtx.Connections.SubmitCommand(c, cmd);
+  FCrackTasks.Declare(id, tkSearch, CRACK_TAG);
+  FCrackRunning := True;
+  UpdateView;
+end;
+
+procedure TPasswordAuditTab.CrackMessage(AMsg: TUiMessage; const ATask: TTrackedTask;
+  AEnding: TTaskEnding);
+var
+  m: TPwdCrackMsg;
+  cov: string;
+begin
+  if AEnding = teStale then
+  begin
+    FCrackRunning := False;
+    RtMessageDlg(Caption, SysUtils.Format(rsAuditCrackFailed, [rsAuditCrackLost]), mtError,
+      [mbOK], 0);
+    UpdateView;
+    Exit;
+  end;
+  if AMsg is TTaskFailedMsg then
+  begin
+    FCrackRunning := False;
+    RtMessageDlg(Caption, SysUtils.Format(rsAuditCrackFailed, [TTaskFailedMsg(AMsg).Text]),
+      mtError, [mbOK], 0);
+    UpdateView;
+    Exit;
+  end;
+  if not (AMsg is TPwdCrackMsg) then Exit;
+  m := TPwdCrackMsg(AMsg);
+  if not m.Final then Exit;
+  FCrackRunning := False;
+  if SearchOutcome(m.Completion) = soFailed then
+  begin
+    RtMessageDlg(Caption, SysUtils.Format(rsAuditCrackFailed, [ErrorToText(m.Error)]), mtError,
+      [mbOK], 0);
+    UpdateView;
+    Exit;
+  end;
+  if SearchOutcome(m.Completion) = soComplete then
+    cov := rsAuditCrackComplete
+  else
+    cov := rsAuditCrackPartial;
+  if m.Written = 0 then
+    RtMessageDlg(Caption, rsAuditCrackEmpty, mtInformation, [mbOK], 0)
+  else
+  begin
+    FCtx.Log(mlInfo, Caption, SysUtils.Format(rsAuditCrackDone, [m.Written, m.Accounts,
+      FCrackPath, cov]));
+    RtMessageDlg(Caption, SysUtils.Format(rsAuditCrackDone, [m.Written, m.Accounts, FCrackPath,
+      cov]), mtInformation, [mbOK], 0);
+  end;
+  UpdateView;
 end;
 
 // Une seule gravite listee: la colonne ne dirait rien.

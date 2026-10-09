@@ -66,7 +66,7 @@ type
     function ExportRows(ACsv: TCsvWriter): Int64; virtual; abstract;
     function Finished: Boolean;
     procedure ListChanged;
-    procedure UpdateView;
+    procedure UpdateView; virtual;
     // Abandonne le parcours en cours et repart avec les reglages du moment.
     procedure Restart;
   public
@@ -80,6 +80,9 @@ type
   end;
 
   TScanTabClass = class of TScanTab;
+
+// Bases a parcourir pour cette connexion.
+function ScanBases(AConn: TDirectoryConnection): TStringArray;
 
 implementation
 

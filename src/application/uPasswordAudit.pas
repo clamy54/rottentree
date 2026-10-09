@@ -13,7 +13,7 @@ unit uPasswordAudit;
 interface
 
 uses
-  SysUtils, uLdapEntry, uLdapSchema, uSearchModel, uPwdCore, uDirectoryWorker,
+  Classes, SysUtils, uLdapEntry, uLdapSchema, uSearchModel, uPwdCore, uDirectoryWorker,
   uDirectoryScan;
 
 const
@@ -67,6 +67,31 @@ type
     procedure Execute(AWorker: TDirectoryWorker); override;
   end;
 
+  // Comptes exportes et empreintes ecrites. Entries reste vide: rien ne remonte en memoire.
+  TPwdCrackMsg = class(TEntriesMsg)
+  public
+    Accounts: Int64;
+    Written: Int64;
+  end;
+
+  // Relit userPassword et ecrit "identite:valeur" dans un fichier prive, en flux. Aucune
+  // empreinte n'est gardee: elles passent de l'annuaire au fichier sans escale ici.
+  TPwdCrackExportCmd = class(TDirectoryScanCmd)
+  private
+    FOut: TStream;
+    FWritten: Int64;
+    FAccounts: Int64;
+    FSinceFlush: Integer;
+    FCompletion: TSearchCompletion;
+    procedure OnEntry(AEntry: TLdapEntry; var AStop: Boolean);
+    procedure FillFromScan(ADest: TStream);
+    procedure PostProgress(AFinal: Boolean);
+  public
+    Filter: string;
+    FilePath: string;
+    procedure Execute(AWorker: TDirectoryWorker); override;
+  end;
+
 function PwdAuditListed(ALevel: TPwdStorageLevel): Boolean;
 // Un format non juge passe avant un format correct: le doute ne profite pas a l'accuse.
 function PwdAuditRank(ALevel: TPwdStorageLevel): Integer;
@@ -74,14 +99,18 @@ function PwdAuditRank(ALevel: TPwdStorageLevel): Integer;
 function ClassifyPasswords(AAttr: TLdapAttribute; out ALevel: TPwdStorageLevel;
   out AWorst, AOthers: string): Boolean;
 function PwdAuditFilter(ASchema: TSchemaSnapshot): string;
+// Une valeur hachee qu'un outil de crack peut ingerer: ni clair, ni delegue (SASL), ni
+// prefixe inconnu.
+function PwdCrackable(const AValue: RawByteString): Boolean;
 
 implementation
 
 uses
-  uPasswordSchemes, uUiInbox;
+  uPasswordSchemes, uUiInbox, uSafeSave, uLdapDn;
 
 const
   AUDIT_ATTRS: array[0..5] of string = ('userPassword', 'cn', 'sn', 'givenName', 'mail', 'uid');
+  CRACK_ATTRS: array[0..1] of string = ('userPassword', 'uid');
   FLUSH_ROWS = 200;
   FLUSH_ENTRIES = 1000;
   QUEUE_MAX_BYTES = 16 * 1024 * 1024;
@@ -243,6 +272,110 @@ procedure TPasswordAuditCmd.Execute(AWorker: TDirectoryWorker);
 begin
   FWorker := AWorker;
   Flush(True, ScanAll(Filter, AUDIT_ATTRS, @OnEntry));
+end;
+
+function PwdCrackable(const AValue: RawByteString): Boolean;
+var
+  info: TPwdInfo;
+begin
+  info := PasswordRegistry.Inspect(AValue);
+  Result := info.Valid and (info.Recommendation in [prPreferred, prAcceptable, prLegacy]);
+end;
+
+// uid d'abord, sinon la valeur du RDN, sinon le DN. Le deux-points separe l'identite de la
+// valeur: on le remplace, comme tout caractere de controle, pour ne pas casser la ligne.
+function CrackIdentity(AEntry: TLdapEntry): string;
+var
+  dn: TLdapDn;
+  i: Integer;
+begin
+  Result := ScanText(AEntry.FirstValue('uid'));
+  if (Result = '') and DnTryParse(AEntry.Dn, dn) and (Length(dn.Rdns) > 0) and
+     (Length(dn.Rdns[0].Avas) > 0) then
+    Result := ScanText(dn.Rdns[0].Avas[0].Value);
+  if Result = '' then Result := AEntry.Dn;
+  for i := 1 to Length(Result) do
+    if (Result[i] = ':') or (Result[i] < ' ') then Result[i] := '_';
+end;
+
+procedure TPwdCrackExportCmd.OnEntry(AEntry: TLdapEntry; var AStop: Boolean);
+var
+  a: TLdapAttribute;
+  i: Integer;
+  id: string;
+  v: RawByteString;
+  wroteAny: Boolean;
+begin
+  try
+    a := AEntry.Find('userPassword');
+    if a <> nil then
+    begin
+      id := CrackIdentity(AEntry);
+      wroteAny := False;
+      for i := 0 to a.ValueCount - 1 do
+      begin
+        v := a.Values[i];
+        if PwdCrackable(v) and (Pos(#10, v) = 0) and (Pos(#13, v) = 0) then
+        begin
+          WriteAllBuf(FOut, id + ':' + v + #10);
+          Inc(FWritten);
+          wroteAny := True;
+        end;
+      end;
+      if wroteAny then Inc(FAccounts);
+    end;
+  finally
+    AEntry.Free;
+  end;
+  Inc(FSinceFlush);
+  if FSinceFlush >= FLUSH_ENTRIES then
+  begin
+    PostProgress(False);
+    FSinceFlush := 0;
+  end;
+end;
+
+procedure TPwdCrackExportCmd.FillFromScan(ADest: TStream);
+begin
+  FOut := ADest;
+  FCompletion := ScanAll(Filter, CRACK_ATTRS, @OnEntry);
+end;
+
+procedure TPwdCrackExportCmd.PostProgress(AFinal: Boolean);
+var
+  m: TPwdCrackMsg;
+begin
+  m := TPwdCrackMsg.Create;
+  FWorker.Stamp(m, Self);
+  m.Written := FWritten;
+  m.Accounts := FAccounts;
+  m.Final := AFinal;
+  if AFinal then
+  begin
+    m.Completion := FCompletion;
+    m.Error := FWorker.Session.LastError;
+  end;
+  UiInbox.Post(m);
+end;
+
+procedure TPwdCrackExportCmd.Execute(AWorker: TDirectoryWorker);
+begin
+  FWorker := AWorker;
+  FWritten := 0;
+  FAccounts := 0;
+  FSinceFlush := 0;
+  FCompletion := Default(TSearchCompletion);
+  try
+    // Flux direct vers un temporaire prive, rename atomique: pas de copie en memoire.
+    SavePrivateFill(FilePath, @FillFromScan);
+  except
+    on E: Exception do
+    begin
+      Fail(AWorker, E.Message);
+      Exit;
+    end;
+  end;
+  PostProgress(True);
 end;
 
 end.
