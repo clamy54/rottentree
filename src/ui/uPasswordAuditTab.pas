@@ -87,8 +87,8 @@ resourcestring
   rsAuditCrackSave = 'John/hashcat hash list (*.txt)|*.txt|All files|*.*';
   rsAuditCrackBusy = 'A hash export is already running. Wait for it to finish.';
   rsAuditCrackNoConn = 'Not connected: there is nothing to read again.';
-  rsAuditCrackDone = '%d hashes from %d accounts written to %s (%s). John detects the formats; ' +
-    'hashcat needs one mode per hash type, so split the file by format first.';
+  rsAuditCrackDone = '%d hashes from %d accounts written to %s (%s). Grouped by hash type; ' +
+    'each block carries its hashcat mode, and John detects the format on its own.';
   rsAuditCrackEmpty = 'No crackable hash was written: the readable values are cleartext, delegated ' +
     'to SASL, or of an unknown format. Nothing to feed a cracker.';
   rsAuditCrackFailed = 'Hash export failed: %s';

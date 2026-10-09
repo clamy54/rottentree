@@ -74,15 +74,26 @@ type
     Written: Int64;
   end;
 
-  // Relit userPassword et ecrit "identite:valeur" dans un fichier prive, en flux. Aucune
-  // empreinte n'est gardee: elles passent de l'annuaire au fichier sans escale ici.
+  // Un type de hash = un bloc du fichier. Chaque groupe accumule dans son propre temporaire
+  // prive pendant la relecture; rien ne reste en memoire.
+  TCrackGroup = record
+    Key: string;
+    Order: Integer;
+    Header: string;
+    Stream: TStream;
+  end;
+
+  // Relit userPassword et ecrit "identite:valeur" regroupe par type de hash dans un fichier
+  // prive. Aucune empreinte n'est gardee: elles passent de l'annuaire aux temporaires puis au
+  // fichier final, sans escale en memoire.
   TPwdCrackExportCmd = class(TDirectoryScanCmd)
   private
-    FOut: TStream;
+    FGroups: array of TCrackGroup;
     FWritten: Int64;
     FAccounts: Int64;
     FSinceFlush: Integer;
     FCompletion: TSearchCompletion;
+    function GroupStream(const AKey: string; AOrder: Integer; const AHeader: string): TStream;
     procedure OnEntry(AEntry: TLdapEntry; var AStop: Boolean);
     procedure FillFromScan(ADest: TStream);
     procedure PostProgress(AFinal: Boolean);
@@ -298,12 +309,131 @@ begin
     if (Result[i] = ':') or (Result[i] < ' ') then Result[i] := '_';
 end;
 
+// En-tete d'un bloc: le type lisible et le mode hashcat; john detecte seul le format a partir
+// de la ligne. Le mode hashcat est l'information qui ne se devine pas.
+function CrackHeader(const ATitle, ATools: string): string;
+begin
+  Result := '# ' + ATitle + #10 + '# ' + ATools + #10;
+end;
+
+// Classe une valeur hachee: groupe, ordre d'affichage, en-tete, et la forme a ecrire. Pour
+// hashcat le prefixe {CRYPT}/{ARGON2} doit sauter, alors que {SSHA}/{SHA} doit rester.
+function CrackClassify(const AValue: RawByteString; out AKey: string; out AOrder: Integer;
+  out AHeader: string; out ALine: RawByteString): Boolean;
+var
+  p: Integer;
+  scheme, rest, pre3: string;
+
+  procedure Grp(AOrd: Integer; const AKeyS, ATitle, ATools: string; AStrip: Boolean);
+  begin
+    AOrder := AOrd;
+    AKey := AKeyS;
+    AHeader := CrackHeader(ATitle, ATools);
+    if AStrip then ALine := rest else ALine := AValue;
+  end;
+
+begin
+  Result := False;
+  AKey := '';
+  AOrder := 99;
+  AHeader := '';
+  ALine := '';
+  if not PwdCrackable(AValue) then Exit;
+  scheme := '';
+  rest := AValue;
+  if (Length(AValue) >= 3) and (AValue[1] = '{') then
+  begin
+    p := Pos('}', AValue);
+    if p > 2 then
+    begin
+      scheme := UpperCase(Copy(AValue, 2, p - 2));
+      rest := Copy(AValue, p + 1, MaxInt);
+    end;
+  end;
+  pre3 := Copy(rest, 1, 3);
+
+  if scheme = 'CRYPT' then
+  begin
+    if pre3 = '$6$' then
+      Grp(10, 'crypt-sha512', '{CRYPT} SHA-512-crypt ($6$)',
+        'hashcat -m 1800   john: detection auto', True)
+    else if pre3 = '$5$' then
+      Grp(11, 'crypt-sha256', '{CRYPT} SHA-256-crypt ($5$)',
+        'hashcat -m 7400   john: detection auto', True)
+    else if (pre3 = '$2a') or (pre3 = '$2b') or (pre3 = '$2y') or (pre3 = '$2x') then
+      Grp(12, 'crypt-bcrypt', '{CRYPT} bcrypt ($2)',
+        'hashcat -m 3200   john: detection auto', True)
+    else if pre3 = '$1$' then
+      Grp(13, 'crypt-md5', '{CRYPT} MD5-crypt ($1$)',
+        'hashcat -m 500   john: detection auto', True)
+    else if Length(rest) = 13 then
+      Grp(14, 'crypt-des', '{CRYPT} DES (traditionnel)',
+        'hashcat -m 1500   john: detection auto', True)
+    else if (Length(rest) > 0) and (rest[1] = '_') then
+      Grp(15, 'crypt-bsdi', '{CRYPT} BSDi extended DES',
+        'john: detection auto   hashcat: non pris en charge', True)
+    else
+      Grp(19, 'crypt-autre', '{CRYPT} sous-type non reconnu',
+        'identifier le sous-type crypt avant de lancer un outil', True);
+    Exit(True);
+  end;
+
+  if scheme = 'SSHA' then
+    Grp(20, 'ssha1', '{SSHA} salted SHA-1 (base64)',
+      'hashcat -m 111   john: detection auto', False)
+  else if scheme = 'SHA' then
+    Grp(21, 'sha1', '{SHA} SHA-1 (base64)',
+      'hashcat -m 101   john: detection auto', False)
+  else if scheme = 'SSHA256' then
+    Grp(22, 'ssha256', '{SSHA256} salted SHA-256 (base64)',
+      'hashcat -m 1411   john: detection auto', False)
+  else if scheme = 'SSHA512' then
+    Grp(23, 'ssha512', '{SSHA512} salted SHA-512 (base64)',
+      'hashcat -m 1711   john: detection auto', False)
+  else if scheme = 'ARGON2' then
+    Grp(30, 'argon2', '{ARGON2} (chaine PHC $argon2...)',
+      'hashcat -m 34000 (selon la version)   john: detection auto', True)
+  else if scheme <> '' then
+    // Hachage reconnu mais mode outil pas certain ici: on exporte, prefixe garde, note neutre.
+    Grp(40, 'ldap-' + LowerCase(scheme), '{' + scheme + '}',
+      'format a confirmer selon la version de john/hashcat', False)
+  else
+    Grp(50, 'autre', 'format sans prefixe reconnu', 'format a confirmer', False);
+  Result := True;
+end;
+
+function TPwdCrackExportCmd.GroupStream(const AKey: string; AOrder: Integer;
+  const AHeader: string): TStream;
+var
+  i, attempt: Integer;
+  h: THandle;
+  name: string;
+begin
+  for i := 0 to High(FGroups) do
+    if FGroups[i].Key = AKey then Exit(FGroups[i].Stream);
+  h := THandle(-1);
+  for attempt := 1 to 20 do
+  begin
+    name := Format('%s.rtk%.4x%.4x.tmp', [FilePath, Length(FGroups), Random($10000)]);
+    h := CreatePrivateTempRW(name);
+    if h <> THandle(-1) then Break;
+  end;
+  if h = THandle(-1) then
+    raise EStreamError.Create('cannot create a temporary hash bucket');
+  SetLength(FGroups, Length(FGroups) + 1);
+  FGroups[High(FGroups)].Key := AKey;
+  FGroups[High(FGroups)].Order := AOrder;
+  FGroups[High(FGroups)].Header := AHeader;
+  FGroups[High(FGroups)].Stream := TOwnedHandleStream.Create(h);
+  Result := FGroups[High(FGroups)].Stream;
+end;
+
 procedure TPwdCrackExportCmd.OnEntry(AEntry: TLdapEntry; var AStop: Boolean);
 var
   a: TLdapAttribute;
-  i: Integer;
-  id: string;
-  v: RawByteString;
+  i, order: Integer;
+  id, key, header: string;
+  v, line: RawByteString;
   wroteAny: Boolean;
 begin
   try
@@ -315,9 +445,10 @@ begin
       for i := 0 to a.ValueCount - 1 do
       begin
         v := a.Values[i];
-        if PwdCrackable(v) and (Pos(#10, v) = 0) and (Pos(#13, v) = 0) then
+        if (Pos(#10, v) = 0) and (Pos(#13, v) = 0) and
+           CrackClassify(v, key, order, header, line) then
         begin
-          WriteAllBuf(FOut, id + ':' + v + #10);
+          WriteAllBuf(GroupStream(key, order, header), id + ':' + line + #10);
           Inc(FWritten);
           wroteAny := True;
         end;
@@ -335,10 +466,44 @@ begin
   end;
 end;
 
+// Parcours en flux vers les temporaires par groupe, puis concatenation triee dans le fichier
+// final. La memoire ne garde que les en-tetes, jamais les empreintes.
 procedure TPwdCrackExportCmd.FillFromScan(ADest: TStream);
+var
+  i, j: Integer;
+  g: TCrackGroup;
+  buf: array[0..65535] of Byte;
+  n: LongInt;
 begin
-  FOut := ADest;
-  FCompletion := ScanAll(Filter, CRACK_ATTRS, @OnEntry);
+  FGroups := nil;
+  try
+    FCompletion := ScanAll(Filter, CRACK_ATTRS, @OnEntry);
+    for i := 1 to High(FGroups) do
+    begin
+      g := FGroups[i];
+      j := i - 1;
+      while (j >= 0) and (FGroups[j].Order > g.Order) do
+      begin
+        FGroups[j + 1] := FGroups[j];
+        Dec(j);
+      end;
+      FGroups[j + 1] := g;
+    end;
+    for i := 0 to High(FGroups) do
+    begin
+      WriteAllBuf(ADest, FGroups[i].Header);
+      FGroups[i].Stream.Seek(Int64(0), soBeginning);
+      repeat
+        n := FGroups[i].Stream.Read(buf, SizeOf(buf));
+        if n > 0 then ADest.WriteBuffer(buf, n);
+      until n <= 0;
+      WriteAllBuf(ADest, #10);
+    end;
+  finally
+    for i := 0 to High(FGroups) do
+      FGroups[i].Stream.Free;
+    FGroups := nil;
+  end;
 end;
 
 procedure TPwdCrackExportCmd.PostProgress(AFinal: Boolean);
