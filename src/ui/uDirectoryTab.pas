@@ -36,6 +36,10 @@ resourcestring
   rsDirExpertHint = 'Open the expert search (filter builder, attributes, limits, history) with this base, ' +
     'filter and scope';
   rsDirMenuNewChild = 'New child entry...';
+  rsDirMenuFromTemplate = 'Create from template...';
+  rsDirMenuSaveTemplate = 'Save as template...';
+  rsDirMenuTemplates = 'Entry templates...';
+  rsDirTemplateWait = 'The entry is still being read: try again in a moment.';
   rsDirMenuRename = 'Rename or move...';
   rsDirMenuDelete = 'Delete...';
   rsDirMenuRefresh = 'Refresh';
@@ -96,6 +100,26 @@ resourcestring
   rsDirNotInFile = '(not in file)';
   rsDirServerConfig = '(server configuration)';
   rsDirGlueSelected = 'This level is not in the LDIF file: it only groups the entries below it.';
+  rsDirMenuMoveTo = 'Move to...';
+  rsDirMenuCopyDns = 'Copy DNs';
+  rsDirMultiSelected = '%d entries selected. Delete, move, export or copy their DNs from the context menu.';
+  rsDirMultiPreview = '%d entries under the %d selected entries, subtrees included, deleted from the leaves ' +
+    'to the root. No recursive delete control is used.';
+  rsDirMultiDone = '%d entries deleted under the %d selected entries';
+  rsDirMultiResume = 'To finish, select what remains and delete it again once connected: nothing already ' +
+    'deleted is sent twice.';
+  rsDirMoveNewParent = 'New parent DN (%d entries, names unchanged)';
+  rsDirMoveNothing = 'Nothing to move: the selected entries are already under %s.';
+  rsDirMoveBusy = 'A move is already in progress.';
+  rsDirMoveDone = '%d entries moved under %s';
+  rsDirMoveStopped = 'Move stopped: %d of %d entries moved under %s. %s';
+  rsDirMenuAddToGroup = 'Add to group...';
+  rsDirGroupPrompt = 'Group to add the %d selected users to';
+  rsDirGroupBusy = 'A group addition is already in progress.';
+  rsDirGroupUnread = '%s could not be read: %s';
+  rsDirNotAGroup = '%s is not a group.';
+  rsDirGroupNote = 'Group model: %s. %d of %d selected users added.';
+  rsDirGroupSkipped = '%d already direct members, left out.';
 
 type
   TTreeChildInfo = record
@@ -158,6 +182,11 @@ type
     FPendingReadDn: string;
     FAcceptedNode: TTreeNode;
     FRestoringSelection: Boolean;
+    // Destruction en cours: y repondre en depliant un parent scierait la branche qu'on parcourt.
+    FTreeChanging: Integer;
+    FSelectionDeferred: Boolean;
+    // Question modale en cours, ou deja prevue: pas de seconde par-dessus.
+    FAskingDiscard, FDiscardQueued: Boolean;
     FOps: TConnectionOps;
     FSubtree: TSubtreeDeletion;
     FSubtreeOwner: TObject;
@@ -171,6 +200,50 @@ type
     FOnEntryWritten: TOpenEntryDnEvent;
     FDragNode: TTreeNode;
     FDragStart: TPoint;
+    FCopyDnItem: TMenuItem;
+    FTemplatesItem: TMenuItem;
+    FMultiItems: array of TMenuItem;
+    // Deplacement de plusieurs entrees: une a la fois, la suivante a la reponse de la precedente.
+    FMoveSources: TStringArray;
+    FMoveTarget: string;
+    FMovePos: Integer;
+    FMoveDone: Integer;
+    FMoveFollow: string;
+    // Ajout a un groupe: groupe et uid relus avant l'apercu, jamais devines depuis l'arbre.
+    FGroupDn: string;
+    FGroupMembers: TStringArray;
+    FGroupUids: TStringArray;
+    FGroupUidPos: Integer;
+    FGroupEntry: TLdapEntry;
+    FRootsFollow: string;
+    function AddRootNode(AConn: TDirectoryConnection; const ADn: string;
+      const AKnownConfig: TStringArray): TTreeNode;
+    function RefreshRoots: Boolean;
+    procedure RootsMessage(AMsg: TUiMessage; AEnding: TTaskEnding);
+    procedure SyncRoots;
+    function ActionAreUsers: Boolean;
+    function SearchRootDn: string;
+    procedure AddToGroupClick(Sender: TObject);
+    procedure GroupMessage(AMsg: TUiMessage; const ATag: string; AEnding: TTaskEnding);
+    procedure FinishGroupAdd;
+    procedure AbortGroupAdd(const AReason: string);
+    procedure ResetGroupAdd;
+    function NodeIsEntry(ANode: TTreeNode): Boolean;
+    function IsMultiSelection: Boolean;
+    function SelectedEntryDns: TStringArray;
+    function ActionDns: TStringArray;
+    procedure SelectOnly(ANode: TTreeNode);
+    procedure BeginTreeChange;
+    procedure EndTreeChange;
+    procedure AskThenSelect(AData: PtrInt);
+    procedure ApplySelection;
+    procedure ReloadDns(const ADns: array of string);
+    function StartDeletion(const ADns: array of string): Boolean;
+    procedure MoveToClick(Sender: TObject);
+    procedure MoveEntries(const ADns: TStringArray; const ADefaultParent: string);
+    procedure SubmitNextMove;
+    procedure MoveMessage(AMsg: TUiMessage; AEnding: TTaskEnding);
+    procedure FinishMoves(const AProblem: string; AUncertain: Boolean = False);
     procedure SubtreeEntries(AMsg: TEntriesMsg);
     procedure SubtreeWrite(AMsg: TWriteMsg);
     function SubtreeStopSummary(const AReason: string): string;
@@ -218,6 +291,9 @@ type
     procedure SearchClick(Sender: TObject);
     procedure ExpertClick(Sender: TObject);
     procedure NewChildClick(Sender: TObject);
+    procedure NewFromTemplateClick(Sender: TObject);
+    procedure SaveAsTemplateClick(Sender: TObject);
+    procedure TemplatesClick(Sender: TObject);
     procedure NewAdUserClick(Sender: TObject);
     procedure NewAdComputerClick(Sender: TObject);
     procedure NewAdGroupClick(Sender: TObject);
@@ -295,8 +371,9 @@ implementation
 
 uses
   uTheme, uIcons, uSensitive, uLdapFilter, uDirectoryService,
-  uServerKind, uTransferDialog, uMembershipDialog, uDynamicGroupDialog, uAccountDialog, uAdToolsDialog, uRtMessage, uCreateWizard, uAdSecurityDialogs,
-  uMenuBar, uAdCreateDialogs, uAdProtection, uGroupModel, uTaskDialog;
+  uServerKind, uTransferDialog, uMembershipDialog, uDynamicGroupDialog, uAccountDialog, uAdToolsDialog, uRtMessage, uCreateWizard, uTemplateDeploy, uTemplateManager, uAdSecurityDialogs,
+  uMenuBar, uAdCreateDialogs, uAdProtection, uGroupModel, uTaskDialog, uLdifExportDialog,
+  uEntryPickDialog;
 
 const
   CONFIG_ROOT_TAG = 'configroot:';
@@ -309,6 +386,11 @@ const
   MENU_TAG_NEW_CHILD = 6;
   MENU_TAG_GROUP = 7;
   MENU_TAG_DYNAMIC_GROUP = 8;
+  MOVE_TAG = 'move';
+  MENU_TAG_USERS = 9;
+  GROUP_TAG = 'addgroup';
+  GROUP_UID_TAG = 'adduid';
+  ROOTS_TAG = 'roots';
 
 function ClassesKey(AEntry: TLdapEntry): string;
 var
@@ -371,6 +453,7 @@ begin
   FSubtreeOps.Free;
   FSubtreeOwner.Free;
   FOps.Free;
+  FGroupEntry.Free;
   inherited Destroy;
 end;
 
@@ -389,17 +472,22 @@ var
   pTop, pLeft: TPanel;
   split: TSplitter;
 
-  procedure MenuItem(const ACaption: string; AHandler: TNotifyEvent; AShortCut: TShortCut = 0;
-    AWrites: Boolean = False; ATag: Integer = 0);
-  var
-    mi: TMenuItem;
+  function MenuItem(const ACaption: string; AHandler: TNotifyEvent; AShortCut: TShortCut = 0;
+    AWrites: Boolean = False; ATag: Integer = 0): TMenuItem;
   begin
-    mi := TMenuItem.Create(FTreeMenu);
-    mi.Caption := ACaption;
-    mi.OnClick := AHandler;
-    mi.ShortCut := AShortCut;
-    if AWrites then mi.Tag := MENU_TAG_WRITES else mi.Tag := ATag;
-    FTreeMenu.Items.Add(mi);
+    Result := TMenuItem.Create(FTreeMenu);
+    Result.Caption := ACaption;
+    Result.OnClick := AHandler;
+    Result.ShortCut := AShortCut;
+    if AWrites then Result.Tag := MENU_TAG_WRITES else Result.Tag := ATag;
+    FTreeMenu.Items.Add(Result);
+  end;
+
+  // Seules ces commandes restent actives quand plusieurs entrees sont selectionnees.
+  procedure Multi(AItem: TMenuItem);
+  begin
+    SetLength(FMultiItems, Length(FMultiItems) + 1);
+    FMultiItems[High(FMultiItems)] := AItem;
   end;
 
 begin
@@ -456,6 +544,8 @@ begin
   FTree.HideSelection := False;
   // Le dessin theme de la LCL ignore nos couleurs: on dessine nous-memes.
   FTree.Options := FTree.Options - [tvoThemedDraw];
+  FTree.Options := FTree.Options + [tvoAllowMultiselect];
+  FTree.MultiSelectStyle := [msControlSelect, msShiftSelect];
   FTree.OnExpanding := @TreeExpanding;
   FTree.OnAdvancedCustomDrawItem := @TreeDraw;
   FTree.OnExpanded := @TreeExpanded;
@@ -469,23 +559,27 @@ begin
   FTree.OnDragDrop := @TreeDragDrop;
   FTreeMenu := TPopupMenu.Create(Self);
   FTreeMenu.OnPopup := @TreePopup;
-  MenuItem(rsDirMenuRefresh, @RefreshNodeClick, VK_F5);
+  Multi(MenuItem(rsDirMenuRefresh, @RefreshNodeClick, VK_F5));
   MenuItem(rsDirMenuProperties, @RereadClick);
   MenuItem('-', nil);
   MenuItem(rsDirMenuNewChild, @NewChildClick, 0, False, MENU_TAG_NEW_CHILD);
+  MenuItem(rsDirMenuFromTemplate, @NewFromTemplateClick, 0, False, MENU_TAG_NEW_CHILD);
   MenuItem(rsDirMenuNewUser, @NewAdUserClick, 0, False, MENU_TAG_AD_NEW_OBJECT);
   MenuItem(rsDirMenuNewComputer, @NewAdComputerClick, 0, False, MENU_TAG_AD_NEW_OBJECT);
   MenuItem(rsDirMenuNewGroup, @NewAdGroupClick, 0, False, MENU_TAG_AD_NEW_OBJECT);
   MenuItem(rsDirMenuNewOu, @NewAdOuClick, 0, False, MENU_TAG_AD_NEW_OU);
   MenuItem('-', nil);
   MenuItem(rsDirMenuRename, @RenameClick, 0, True);
-  MenuItem(rsDirMenuDelete, @DeleteClick, VK_DELETE, True);
+  Multi(MenuItem(rsDirMenuMoveTo, @MoveToClick, 0, True));
+  Multi(MenuItem(rsDirMenuDelete, @DeleteClick, VK_DELETE, True));
   MenuItem(rsDirMenuClone, @CloneClick, 0, True);
+  MenuItem(rsDirMenuSaveTemplate, @SaveAsTemplateClick);
   MenuItem(rsDirMenuCopySubtree, @CopySubtreeClick);
   MenuItem(rsDirMenuMoveServer, @MoveServerClick, 0, True);
   MenuItem('-', nil);
   MenuItem(rsDirMenuMembers, @MembersClick, 0, False, MENU_TAG_GROUP);
   MenuItem(rsDirMenuMemberOf, @MemberOfClick);
+  Multi(MenuItem(rsDirMenuAddToGroup, @AddToGroupClick, 0, False, MENU_TAG_USERS));
   MenuItem(rsDirMenuDynamic, @DynamicClick, 0, False, MENU_TAG_DYNAMIC_GROUP);
   MenuItem(rsDirMenuAccount, @AccountClick);
   MenuItem(rsDirMenuReplMeta, @ReplMetaClick, 0, False, MENU_TAG_AD);
@@ -493,10 +587,13 @@ begin
   MenuItem(rsDirMenuSecurity, @SecurityClick, 0, False, MENU_TAG_AD);
   MenuItem(rsDirMenuProtection, @ProtectionClick, 0, False, MENU_TAG_AD);
   MenuItem('-', nil);
-  MenuItem(rsDirMenuCopyDn, @CopyDnClick);
+  FCopyDnItem := MenuItem(rsDirMenuCopyDn, @CopyDnClick);
+  Multi(FCopyDnItem);
   MenuItem(rsDirMenuSearchHere, @SearchHereClick);
-  MenuItem(rsDirMenuExportEntry, @ExportEntryClick);
+  Multi(MenuItem(rsDirMenuExportEntry, @ExportEntryClick));
   MenuItem(rsDirMenuPassword, @PasswordClick);
+  MenuItem('-', nil);
+  FTemplatesItem := MenuItem(rsDirMenuTemplates, @TemplatesClick);
   FTree.PopupMenu := FTreeMenu;
   ThemePopupMenu(FTreeMenu);
   FTreeScroll.Bind(FTree);
@@ -549,13 +646,136 @@ begin
   ArrangeByCreation(Self);
 end;
 
+function TDirectoryTab.AddRootNode(AConn: TDirectoryConnection; const ADn: string;
+  const AKnownConfig: TStringArray): TTreeNode;
+var
+  data: TNodeData;
+begin
+  data := TNodeData.Create;
+  data.Dn := ADn;
+  data.LdifGlue := IsLdifPlaceholderContext(AConn, ADn);
+  if data.LdifGlue then
+  begin
+    Result := FTree.Items.AddObject(nil, ADn + ' ' + rsDirNotInFile, data);
+    SetNodeIcon(Result, 'circle-dashed');
+  end
+  else if DnUnderAny(ADn, AKnownConfig) then
+  begin
+    data.ConfigRoot := True;
+    data.ConfigIndex := -1;
+    Result := FTree.Items.AddObject(nil, ADn + '  ' + rsDirServerConfig, data);
+    SetNodeIcon(Result, 'settings');
+  end
+  else
+  begin
+    Result := FTree.Items.AddObject(nil, ADn, data);
+    SetNodeIcon(Result, 'database');
+  end;
+  Result.HasChildren := True;
+end;
+
+// LDIF sans base imposee: une ecriture au sommet change les racines, le root DSE est relu.
+function TDirectoryTab.RefreshRoots: Boolean;
+var
+  c: TDirectoryConnection;
+begin
+  c := Conn;
+  if (c = nil) or not c.IsReady or (c.Profile.LdifPath = '') or (c.Profile.BaseDns.Count > 0) then
+    Exit(False);
+  FTasks.Cancel(ROOTS_TAG);
+  Result := FTasks.ReadEntry(ROOTS_TAG, '', ['*', '+']) <> 0;
+end;
+
+procedure TDirectoryTab.RootsMessage(AMsg: TUiMessage; AEnding: TTaskEnding);
+var
+  c: TDirectoryConnection;
+  follow: string;
+begin
+  follow := FRootsFollow;
+  FRootsFollow := '';
+  c := Conn;
+  if (AEnding <> teStale) and (AMsg is TEntryMsg) and (TEntryMsg(AMsg).Entry <> nil) and (c <> nil) then
+  begin
+    // La connexion garde le root DSE lu a l'ouverture: il ne decrit plus le fichier.
+    c.RootDse.Free;
+    c.RootDse := TEntryMsg(AMsg).Entry;
+    TEntryMsg(AMsg).Entry := nil;
+    SyncRoots;
+  end;
+  if (follow <> '') and (AEnding <> teStale) then NavigateTo(follow);
+end;
+
+// Les racines qui restent gardent ce qui est deplie dessous.
+procedure TDirectoryTab.SyncRoots;
+var
+  c: TDirectoryConnection;
+  bases, known: TStringArray;
+  node: TTreeNode;
+  d: TNodeData;
+  i, j: Integer;
+  found, glue: Boolean;
+begin
+  c := Conn;
+  if c = nil then Exit;
+  bases := DirectoryBases(c);
+  known := KnownServerConfigRoots(c);
+  FTree.Items.BeginUpdate;
+  try
+    for i := FTree.Items.TopLvlCount - 1 downto 0 do
+    begin
+      node := FTree.Items.TopLvlItems[i];
+      d := TNodeData(node.Data);
+      if (d = nil) or (d.ConfigRoot and (d.ConfigIndex >= 0)) then Continue;
+      found := False;
+      for j := 0 to High(bases) do
+        if SameDnStrict(bases[j], d.Dn) then found := True;
+      if not found then
+      begin
+        BeginTreeChange;
+        try
+          node.Delete;
+        finally
+          EndTreeChange;
+        end;
+        Continue;
+      end;
+      // Un niveau absent du fichier peut y entrer, et l'inverse: libelle et icone suivent.
+      glue := IsLdifPlaceholderContext(c, d.Dn);
+      if glue <> d.LdifGlue then
+      begin
+        d.LdifGlue := glue;
+        if glue then
+        begin
+          node.Text := d.Dn + ' ' + rsDirNotInFile;
+          SetNodeIcon(node, 'circle-dashed');
+        end
+        else
+        begin
+          node.Text := d.Dn;
+          SetNodeIcon(node, 'database');
+        end;
+      end;
+    end;
+    for j := 0 to High(bases) do
+    begin
+      found := False;
+      for i := 0 to FTree.Items.TopLvlCount - 1 do
+      begin
+        d := TNodeData(FTree.Items.TopLvlItems[i].Data);
+        if (d <> nil) and SameDnStrict(bases[j], d.Dn) then found := True;
+      end;
+      if not found then AddRootNode(c, bases[j], known);
+    end;
+  finally
+    FTree.Items.EndUpdate;
+  end;
+end;
+
 procedure TDirectoryTab.ConnectionReady;
 var
   c: TDirectoryConnection;
   bases, known: TStringArray;
   i: Integer;
-  node: TTreeNode;
-  data: TNodeData;
 begin
   c := Conn;
   if (c = nil) or not c.IsReady then Exit;
@@ -568,35 +788,18 @@ begin
     InterruptSubtree(rsDirSessionReplaced, False);
   FTree.Items.BeginUpdate;
   try
-    FTree.Items.Clear;
+    BeginTreeChange;
+    try
+      FTree.Items.Clear;
+    finally
+      EndTreeChange;
+    end;
     bases := DirectoryBases(c);
     // Une base qui est elle-meme la configuration du serveur (ApacheDS sans base choisie,
     // profil pointe sur cn=config) est marquee comme telle.
     known := KnownServerConfigRoots(c);
     for i := 0 to High(bases) do
-    begin
-      data := TNodeData.Create;
-      data.Dn := bases[i];
-      data.LdifGlue := IsLdifPlaceholderContext(c, bases[i]);
-      if data.LdifGlue then
-      begin
-        node := FTree.Items.AddObject(nil, bases[i] + ' ' + rsDirNotInFile, data);
-        SetNodeIcon(node, 'circle-dashed');
-      end
-      else if DnUnderAny(bases[i], known) then
-      begin
-        data.ConfigRoot := True;
-        data.ConfigIndex := -1;
-        node := FTree.Items.AddObject(nil, bases[i] + '  ' + rsDirServerConfig, data);
-        SetNodeIcon(node, 'settings');
-      end
-      else
-      begin
-        node := FTree.Items.AddObject(nil, bases[i], data);
-        SetNodeIcon(node, 'database');
-      end;
-      node.HasChildren := True;
-    end;
+      AddRootNode(c, bases[i], known);
   finally
     FTree.Items.EndUpdate;
   end;
@@ -651,10 +854,31 @@ begin
   Node.Data := nil;
 end;
 
+procedure TDirectoryTab.BeginTreeChange;
+begin
+  Inc(FTreeChanging);
+end;
+
+procedure TDirectoryTab.EndTreeChange;
+begin
+  Dec(FTreeChanging);
+  // Une seule reponse, sur l'arbre stable: celle que la LCL aurait demandee en route.
+  if (FTreeChanging = 0) and FSelectionDeferred then
+  begin
+    FSelectionDeferred := False;
+    TreeSelectionChanged(FTree);
+  end;
+end;
+
 procedure TDirectoryTab.TreeExpanding(Sender: TObject; Node: TTreeNode; var AllowExpansion: Boolean);
 var
   data: TNodeData;
 begin
+  if FTreeChanging > 0 then
+  begin
+    AllowExpansion := False;
+    Exit;
+  end;
   AllowExpansion := True;
   data := TNodeData(Node.Data);
   if (data <> nil) and data.IsGroup then
@@ -746,7 +970,12 @@ begin
   c := Conn;
   if (c = nil) or not c.IsReady then Exit;
   data := TNodeData(ANode.Data);
-  ANode.DeleteChildren;
+  BeginTreeChange;
+  try
+    ANode.DeleteChildren;
+  finally
+    EndTreeChange;
+  end;
   data.Children := nil;
   data.ChildCount := 0;
   data.Rendered := 0;
@@ -922,9 +1151,14 @@ begin
       selDn := TNodeData(sel.Data).Dn;
       wasAccepted := sel = FAcceptedNode;
     end;
-    for i := ANode.Count - 1 downto 0 do
-      if not TNodeData(ANode.Items[i].Data).IsPlaceholder then
-        ANode.Items[i].Delete;
+    BeginTreeChange;
+    try
+      for i := ANode.Count - 1 downto 0 do
+        if not TNodeData(ANode.Items[i].Data).IsPlaceholder then
+          ANode.Items[i].Delete;
+    finally
+      EndTreeChange;
+    end;
     data.Folded := True;
     data.Rendered := 0;
     data.FoldSize := fold;
@@ -987,7 +1221,12 @@ begin
   if data.LdifGlue and AMsg.Final and (AMsg.Entries.Count = 0) and
      (AMsg.Completion.ResultCode = LDAP_RC_NO_SUCH_OBJECT) then
   begin
-    node.Delete;
+    BeginTreeChange;
+    try
+      node.Delete;
+    finally
+      EndTreeChange;
+    end;
     Exit;
   end;
   c := Conn;
@@ -1024,7 +1263,14 @@ begin
     end;
     RenderChildren(node);
     if (ph <> nil) and ((node.Count > 1) or AMsg.Final) then
-      ph.Delete;
+    begin
+      BeginTreeChange;
+      try
+        ph.Delete;
+      finally
+        EndTreeChange;
+      end;
+    end;
     if AMsg.Final then
     begin
       data.Loading := False;
@@ -1061,27 +1307,140 @@ begin
     Result := TNodeData(FTree.Selected.Data).Dn;
 end;
 
+function TDirectoryTab.NodeIsEntry(ANode: TTreeNode): Boolean;
+var
+  d: TNodeData;
+begin
+  Result := False;
+  if (ANode = nil) or (ANode.Data = nil) then Exit;
+  d := TNodeData(ANode.Data);
+  Result := not (d.IsPlaceholder or d.IsGroup or d.LdifGlue);
+end;
+
+function TDirectoryTab.IsMultiSelection: Boolean;
+begin
+  Result := FTree.SelectionCount > 1;
+end;
+
+// Dans l'ordre de l'arbre; paquets, "Loading..." et niveaux absents du LDIF restent dehors.
+function TDirectoryTab.SelectedEntryDns: TStringArray;
+var
+  node: TTreeNode;
+  n: Integer;
+begin
+  Result := nil;
+  SetLength(Result, FTree.SelectionCount);
+  n := 0;
+  node := FTree.Items.GetFirstNode;
+  while (node <> nil) and (n < Length(Result)) do
+  begin
+    if node.MultiSelected and NodeIsEntry(node) then
+    begin
+      Result[n] := TNodeData(node.Data).Dn;
+      Inc(n);
+    end;
+    node := node.GetNext;
+  end;
+  SetLength(Result, n);
+end;
+
+function TDirectoryTab.ActionDns: TStringArray;
+begin
+  if IsMultiSelection then Exit(SelectedEntryDns);
+  Result := nil;
+  if SelectedDn <> '' then
+  begin
+    SetLength(Result, 1);
+    Result[0] := SelectedDn;
+  end;
+end;
+
+// En multiselection, Selected := ne fait qu'ajouter un noeud: une navigation repart de zero.
+procedure TDirectoryTab.SelectOnly(ANode: TTreeNode);
+begin
+  FTree.Items.SelectOnlyThis(ANode);
+end;
+
+// Posee apres l'evenement de la LCL, jamais pendant: un noeud detruit sous la question serait relu
+// au retour par la LCL elle-meme. Ici, plus personne n'en tient.
+procedure TDirectoryTab.AskThenSelect(AData: PtrInt);
+var
+  ok: Boolean;
+begin
+  FDiscardQueued := False;
+  if not HasPendingEdits then
+  begin
+    ApplySelection;
+    Exit;
+  end;
+  FAskingDiscard := True;
+  try
+    ok := ConfirmDiscardEdits;
+  finally
+    FAskingDiscard := False;
+  end;
+  // Ce qui a change pendant la question est deja dans l'arbre: on lit l'etat d'apres.
+  FSelectionDeferred := False;
+  if ok then
+    ApplySelection
+  else if (FAcceptedNode <> nil) and ((FTree.Selected <> FAcceptedNode) or IsMultiSelection) then
+  begin
+    FRestoringSelection := True;
+    try
+      SelectOnly(FAcceptedNode);
+    finally
+      FRestoringSelection := False;
+    end;
+  end;
+end;
+
 procedure TDirectoryTab.TreeSelectionChanged(Sender: TObject);
+begin
+  if (FTreeChanging > 0) or FAskingDiscard then
+  begin
+    FSelectionDeferred := True;
+    Exit;
+  end;
+  if FRestoringSelection then Exit;
+  // Ctrl-clic qui retire le noeud courant: la LCL le garde comme Selected, on se recale.
+  if (FTree.SelectionCount = 1) and (FTree.Selections[0] <> FTree.Selected) then
+  begin
+    FRestoringSelection := True;
+    try
+      SelectOnly(FTree.Selections[0]);
+    finally
+      FRestoringSelection := False;
+    end;
+  end;
+  if HasPendingEdits and (IsMultiSelection or (Sender <> Self)) then
+  begin
+    if not FDiscardQueued then
+    begin
+      FDiscardQueued := True;
+      Application.QueueAsyncCall(@AskThenSelect, 0);
+    end;
+    Exit;
+  end;
+  ApplySelection;
+end;
+
+procedure TDirectoryTab.ApplySelection;
 var
   dn: string;
   c: TDirectoryConnection;
 begin
-  if FRestoringSelection then Exit;
-  dn := SelectedDn;
-  if dn = '' then Exit;
-  if (Sender <> Self) and HasPendingEdits and not ConfirmDiscardEdits then
+  if IsMultiSelection then
   begin
-    if (FAcceptedNode <> nil) and (FTree.Selected <> FAcceptedNode) then
-    begin
-      FRestoringSelection := True;
-      try
-        FTree.Selected := FAcceptedNode;
-      finally
-        FRestoringSelection := False;
-      end;
-    end;
+    // Plus d'entree courante: un outil du menu ne vise pas une entree tiree au hasard du lot.
+    FAcceptedNode := nil;
+    FTasks.Cancel('read');
+    FPendingReadDn := '';
+    FEditor.ReadPending := False;
+    FEditor.ShowPlaceholder(Format(rsDirMultiSelected, [Length(SelectedEntryDns)]));
     Exit;
   end;
+  dn := SelectedDn;
+  if (dn = '') or (FTree.Selected = nil) then Exit;
   FAcceptedNode := FTree.Selected;
   FDnBox.SetText(dn);
   if TNodeData(FTree.Selected.Data).LdifGlue then
@@ -1108,7 +1467,12 @@ begin
   node := NodeForTask(ATaskId);
   if node = nil then Exit;
   data := TNodeData(node.Data);
-  node.DeleteChildren;
+  BeginTreeChange;
+  try
+    node.DeleteChildren;
+  finally
+    EndTreeChange;
+  end;
   data.Loading := False;
   data.Loaded := False;
   data.ExpandRequested := False;
@@ -1156,6 +1520,21 @@ begin
     end;
     FEditor.ShowEntry(TEntryMsg(AMsg).Entry);
     TEntryMsg(AMsg).Entry := nil;
+    Exit;
+  end;
+  if ATask.Tag = MOVE_TAG then
+  begin
+    MoveMessage(AMsg, AEnding);
+    Exit;
+  end;
+  if ATask.Tag = ROOTS_TAG then
+  begin
+    RootsMessage(AMsg, AEnding);
+    Exit;
+  end;
+  if (ATask.Tag = GROUP_TAG) or (ATask.Tag = GROUP_UID_TAG) then
+  begin
+    GroupMessage(AMsg, ATask.Tag, AEnding);
     Exit;
   end;
   if ATask.Tag = VIEW_WRITE_TAG then
@@ -1273,6 +1652,7 @@ begin
     if AChange.Kind <> ckModDn then
     begin
       if oldNode <> nil then ReloadNode(oldNode);
+      RefreshRoots;
       Exit;
     end;
     follow := SameDnStrict(SelectedDn, AChange.Dn) or
@@ -1298,6 +1678,12 @@ begin
   finally
     cmp.Free;
   end;
+  // Renommage d'une racine LDIF: la navigation attend le recalage.
+  if RefreshRoots then
+  begin
+    if follow then FRootsFollow := newDn;
+    Exit;
+  end;
   if follow then NavigateTo(newDn);
 end;
 
@@ -1308,15 +1694,37 @@ end;
 
 procedure TDirectoryTab.TreePopup(Sender: TObject);
 var
-  i: Integer;
+  i, j: Integer;
   c: TDirectoryConnection;
-  writable, hasDn: Boolean;
+  writable, hasDn, multi, allowed: Boolean;
   kind: TProviderKind;
 begin
   c := Conn;
   writable := (c <> nil) and c.IsReady and not c.Profile.ReadOnly;
   hasDn := SelectedDn <> '';
   kind := ServerKind;
+  multi := IsMultiSelection;
+  if multi then FCopyDnItem.Caption := rsDirMenuCopyDns
+  else FCopyDnItem.Caption := rsDirMenuCopyDn;
+  if multi then
+  begin
+    hasDn := Length(SelectedEntryDns) > 0;
+    for i := 0 to FTreeMenu.Items.Count - 1 do
+      with FTreeMenu.Items[i] do
+      begin
+        if Caption = '-' then Continue;
+        allowed := False;
+        for j := 0 to High(FMultiItems) do
+          if FMultiItems[j] = FTreeMenu.Items[i] then allowed := True;
+        Enabled := allowed and hasDn and (writable or (Tag <> MENU_TAG_WRITES));
+        if Tag = MENU_TAG_USERS then Enabled := Enabled and writable and ActionAreUsers;
+        if (Tag = MENU_TAG_AD) or (Tag = MENU_TAG_AD_WRITES) or (Tag = MENU_TAG_AD_NEW_OBJECT) or
+           (Tag = MENU_TAG_AD_NEW_OU) then
+          Visible := kind = pkActiveDirectory;
+      end;
+    FTemplatesItem.Enabled := True;
+    Exit;
+  end;
   for i := 0 to FTreeMenu.Items.Count - 1 do
     with FTreeMenu.Items[i] do
       case Tag of
@@ -1335,6 +1743,7 @@ begin
         MENU_TAG_NEW_CHILD: Enabled := writable and hasDn and SelectedIsContainer;
         MENU_TAG_GROUP: Enabled := hasDn and SelectedMayBeGroup(False);
         MENU_TAG_DYNAMIC_GROUP: Enabled := hasDn and SelectedMayBeGroup(True);
+        MENU_TAG_USERS: Enabled := writable and hasDn and ActionAreUsers;
         MENU_TAG_AD_NEW_OBJECT, MENU_TAG_AD_NEW_OU:
           begin
             Visible := kind = pkActiveDirectory;
@@ -1343,11 +1752,12 @@ begin
       else
         if Caption <> '-' then Enabled := hasDn;
       end;
+  FTemplatesItem.Enabled := True;
   if hasDn and (FTree.Selected <> nil) and TNodeData(FTree.Selected.Data).LdifGlue then
     for i := 0 to FTreeMenu.Items.Count - 1 do
       with FTreeMenu.Items[i] do
         if (Caption <> '-') and (Caption <> rsDirMenuRefresh) and (Caption <> rsDirMenuCopyDn) and
-           (Caption <> rsDirMenuSearchHere) then
+           (Caption <> rsDirMenuSearchHere) and (Caption <> rsDirMenuTemplates) then
           Enabled := False;
 end;
 
@@ -1543,6 +1953,7 @@ procedure TDirectoryTab.TreeDragOver(Sender, Source: TObject; X, Y: Integer; Sta
 var
   target: TTreeNode;
   c: TDirectoryConnection;
+  i: Integer;
 begin
   Accept := False;
   c := Conn;
@@ -1550,6 +1961,14 @@ begin
   target := FTree.GetNodeAt(X, Y);
   if (target = nil) or (target.Data = nil) or TNodeData(target.Data).IsPlaceholder or
      TNodeData(target.Data).IsGroup then Exit;
+  if FDragNode.MultiSelected and IsMultiSelection then
+  begin
+    // Lot: refuse seulement si la cible est dans une des branches deplacees.
+    for i := 0 to FTree.SelectionCount - 1 do
+      if (target = FTree.Selections[i]) or target.HasAsParent(FTree.Selections[i]) then Exit;
+    Accept := True;
+    Exit;
+  end;
   if (target = FDragNode) or target.HasAsParent(FDragNode) or
      (target = EntryNode(FDragNode.Parent)) then Exit;
   Accept := True;
@@ -1562,6 +1981,12 @@ var
 begin
   target := FTree.GetNodeAt(X, Y);
   if (Source <> FTree) or (FDragNode = nil) or (target = nil) or (target.Data = nil) then Exit;
+  if FDragNode.MultiSelected and IsMultiSelection then
+  begin
+    FDragNode := nil;
+    MoveEntries(SelectedEntryDns, TNodeData(target.Data).Dn);
+    Exit;
+  end;
   dn := TNodeData(FDragNode.Data).Dn;
   FDragNode := nil;
   PrepareMove(dn, TNodeData(target.Data).Dn);
@@ -1571,6 +1996,11 @@ procedure TDirectoryTab.RefreshNodeClick(Sender: TObject);
 var
   node: TTreeNode;
 begin
+  if IsMultiSelection then
+  begin
+    ReloadDns(SelectedEntryDns);
+    Exit;
+  end;
   node := FTree.Selected;
   if node = nil then Exit;
   if (node.Data <> nil) and (TNodeData(node.Data).IsPlaceholder or TNodeData(node.Data).IsGroup) then
@@ -1605,9 +2035,17 @@ begin
 end;
 
 procedure TDirectoryTab.CopyDnClick(Sender: TObject);
+var
+  dns: TStringArray;
+  lines: string;
+  i: Integer;
 begin
-  if SelectedDn <> '' then
-    Clipboard.AsText := SelectedDn;
+  dns := ActionDns;
+  if Length(dns) = 0 then Exit;
+  lines := dns[0];
+  for i := 1 to High(dns) do
+    lines := lines + LineEnding + dns[i];
+  Clipboard.AsText := lines;
 end;
 
 procedure TDirectoryTab.SearchHereClick(Sender: TObject);
@@ -1654,6 +2092,12 @@ end;
 
 procedure TDirectoryTab.ExportEntryClick(Sender: TObject);
 begin
+  // Selection relue au moment de l'export: l'editeur ne montre aucune de ces entrees.
+  if IsMultiSelection then
+  begin
+    ShowLdifExportMany(GetParentForm(Self), FCtx, FProfileUuid, SelectedEntryDns);
+    Exit;
+  end;
   if Assigned(FOnExportEntry) and (FEditor.Original <> nil) then
     FOnExportEntry(Self, FEditor.Original);
 end;
@@ -1728,7 +2172,7 @@ begin
       if cmp.CompareDn(nd, target) = dmEqual then
       begin
         FPendingSelectDn := '';
-        node.Selected := True;
+        SelectOnly(node);
         node.MakeVisible;
         Exit;
       end;
@@ -1795,6 +2239,38 @@ begin
   created := ShowCreateWizard(GetParentForm(Self), FCtx, c.Profile.Uuid, parentDn);
   if created = '' then Exit;
   FollowCreation(parentDn, created);
+end;
+
+procedure TDirectoryTab.NewFromTemplateClick(Sender: TObject);
+var
+  parentDn, created: string;
+  c: TDirectoryConnection;
+begin
+  c := Conn;
+  parentDn := SelectedDn;
+  if (c = nil) or (parentDn = '') then Exit;
+  created := CreateFromTemplate(GetParentForm(Self), FCtx, c.Profile.Uuid, parentDn);
+  if created = '' then Exit;
+  FollowCreation(parentDn, created);
+end;
+
+procedure TDirectoryTab.SaveAsTemplateClick(Sender: TObject);
+var
+  e: TLdapEntry;
+begin
+  e := CurrentEntry;
+  // Le modele se deduit de l'entree affichee: tant que la lecture court, il n'y a rien a deduire.
+  if (SelectedDn = '') or (e = nil) or not SameDn(e.Dn, SelectedDn) then
+  begin
+    RtMessageDlg(rsDirMenuSaveTemplate, rsDirTemplateWait, mtInformation, [mbOK], 0);
+    Exit;
+  end;
+  NewTemplateFromEntry(GetParentForm(Self), FCtx, FProfileUuid, e);
+end;
+
+procedure TDirectoryTab.TemplatesClick(Sender: TObject);
+begin
+  ShowTemplateManager(GetParentForm(Self), FCtx, FProfileUuid);
 end;
 
 procedure TDirectoryTab.FollowCreation(const AParentDn, ACreated: string);
@@ -1907,6 +2383,391 @@ begin
     RtMessageDlg(Caption, reason, mtWarning, [mbOK], 0);
 end;
 
+// Meme nom, nouveau parent. RDN inchange: deleteOldRDN ne retire rien, et AD l'exige.
+function MoveChange(const ADn, ANewParent: string): TLdapChange;
+var
+  src: TLdapDn;
+begin
+  Result := NewChange(ckModDn, ADn);
+  if DnTryParse(ADn, src) then Result.NewRdn := RdnToString(DnLeaf(src));
+  Result.HasNewSuperior := True;
+  Result.NewSuperior := ANewParent;
+  Result.DeleteOldRdn := True;
+end;
+
+procedure TDirectoryTab.MoveToClick(Sender: TObject);
+var
+  dns: TStringArray;
+  d: TLdapDn;
+begin
+  dns := ActionDns;
+  if Length(dns) = 0 then Exit;
+  if DnTryParse(dns[0], d) then
+    MoveEntries(dns, DnToString(DnParent(d)))
+  else
+    MoveEntries(dns, '');
+end;
+
+procedure TDirectoryTab.MoveEntries(const ADns: TStringArray; const ADefaultParent: string);
+var
+  rules: TDnCaseRules;
+  cmp: TDnComparer;
+  kept, sources: TStringArray;
+  newParent, err, reason: string;
+  np, src: TLdapDn;
+  changes: array of TLdapChange;
+  i, n: Integer;
+  ok: Boolean;
+begin
+  if Conn = nil then Exit;
+  if FMoveSources <> nil then
+  begin
+    RtMessageDlg(rsDirMenuMoveTo, rsDirMoveBusy, mtWarning, [mbOK], 0);
+    Exit;
+  end;
+  newParent := ADefaultParent;
+  if not RtInputQuery(rsDirMenuMoveTo, Format(rsDirMoveNewParent, [Length(ADns)]), newParent) then Exit;
+  if not DnParse(newParent, np, err) then
+  begin
+    RtMessageDlg(rsDirMenuMoveTo, Format(rsDirInvalidDn, [err]), mtError, [mbOK], 0);
+    Exit;
+  end;
+  sources := nil;
+  // Casse selon le schema: "ou=People" et "OU=people" sont le meme parent, sinon l'enfant part
+  // apres lui vers un DN qui n'existe plus.
+  rules := TDnCaseRules.Create(Conn);
+  cmp := rules.NewComparer;
+  try
+    // Une entree sous une autre de la selection suit son parent: la deplacer aussi echouerait.
+    kept := DnOutermost(ADns, @rules.Folds, @rules.Canon);
+    SetLength(sources, Length(kept));
+    n := 0;
+    for i := 0 to High(kept) do
+    begin
+      if not DnTryParse(kept[i], src) or (DnRdnCount(src) = 0) then Continue;
+      if cmp.IsUnder(np, src, True) = dmEqual then
+      begin
+        RtMessageDlg(rsDirMenuMoveTo, rsDirRenameUnderItself + LineEnding + kept[i], mtError, [mbOK], 0);
+        Exit;
+      end;
+      if cmp.CompareDn(DnParent(src), np) = dmEqual then Continue;
+      sources[n] := kept[i];
+      Inc(n);
+    end;
+    SetLength(sources, n);
+  finally
+    cmp.Free;
+    rules.Free;
+  end;
+  if n = 0 then
+  begin
+    RtMessageDlg(rsDirMenuMoveTo, Format(rsDirMoveNothing, [newParent]), mtInformation, [mbOK], 0);
+    Exit;
+  end;
+  // Un seul apercu pour tout le lot; chaque ModDN part ensuite seul, avec le meme contenu.
+  changes := nil;
+  SetLength(changes, n);
+  for i := 0 to n - 1 do
+    changes[i] := MoveChange(sources[i], newParent);
+  try
+    ok := ConfirmWrite(GetParentForm(Self), FCtx, FTasks, changes, reason);
+  finally
+    for i := 0 to n - 1 do
+      changes[i].Free;
+  end;
+  if not ok then
+  begin
+    if reason <> '' then RtMessageDlg(rsDirMenuMoveTo, reason, mtWarning, [mbOK], 0);
+    Exit;
+  end;
+  FMoveSources := sources;
+  FMoveTarget := newParent;
+  FMovePos := 0;
+  FMoveDone := 0;
+  FMoveFollow := '';
+  SubmitNextMove;
+end;
+
+// Un a la fois: un refus arrete la suite au lieu d'en produire cinquante, et le bilan dit ou.
+procedure TDirectoryTab.SubmitNextMove;
+var
+  err: TLdapError;
+begin
+  if FMovePos >= Length(FMoveSources) then
+  begin
+    FinishMoves('');
+    Exit;
+  end;
+  if FTasks.Write(MOVE_TAG, MoveChange(FMoveSources[FMovePos], FMoveTarget), '', err) = 0 then
+  begin
+    FinishMoves(ErrorToText(err));
+    Exit;
+  end;
+  Inc(FMovePos);
+end;
+
+procedure TDirectoryTab.MoveMessage(AMsg: TUiMessage; AEnding: TTaskEnding);
+var
+  w: TWriteMsg;
+begin
+  if FMoveSources = nil then Exit;
+  // Issue inconnue: le ModDN a pu passer, l'arbre est relu quoi qu'il en soit.
+  if AEnding = teStale then
+  begin
+    FinishMoves(rsDirWriteSessionLost, True);
+    Exit;
+  end;
+  if AMsg is TTaskFailedMsg then
+  begin
+    FinishMoves(TTaskFailedMsg(AMsg).Text, True);
+    Exit;
+  end;
+  if not (AMsg is TWriteMsg) then Exit;
+  w := TWriteMsg(AMsg);
+  if not w.Result.Ok then
+  begin
+    if w.Result.Error.Category = lecUnknownOutcome then
+      FinishMoves(rsDirUnknownOutcome + ' ' + w.Change.Describe, True)
+    else
+      FinishMoves(ErrorToText(w.Result.Error) + ' - ' + w.Change.Describe);
+    Exit;
+  end;
+  FCtx.Log(mlInfo, Caption, w.Change.Describe);
+  // Parent vide (racine d'un fichier LDIF): pas de virgule, "cn=x," n'est pas un DN.
+  if (FEditor.Original <> nil) and SameDnStrict(FEditor.Original.Dn, w.Change.Dn) then
+  begin
+    FMoveFollow := w.Change.NewRdn;
+    if FMoveTarget <> '' then FMoveFollow := FMoveFollow + ',' + FMoveTarget;
+  end;
+  Inc(FMoveDone);
+  SubmitNextMove;
+end;
+
+procedure TDirectoryTab.FinishMoves(const AProblem: string; AUncertain: Boolean);
+var
+  parents: TStringArray;
+  d: TLdapDn;
+  i, n, total: Integer;
+  msg: string;
+  rootsAsked: Boolean;
+begin
+  total := Length(FMoveSources);
+  // Anciens parents et destination relus une fois, a la fin, pas a chaque deplacement.
+  // Un DN vide serait l'ancetre de tout le reste: il ne doit pas entrer dans la liste.
+  parents := nil;
+  SetLength(parents, total + 1);
+  n := 0;
+  for i := 0 to total - 1 do
+    if DnTryParse(FMoveSources[i], d) and (DnRdnCount(d) > 1) then
+    begin
+      parents[n] := DnToString(DnParent(d));
+      Inc(n);
+    end;
+  if FMoveTarget <> '' then
+  begin
+    parents[n] := FMoveTarget;
+    Inc(n);
+  end;
+  SetLength(parents, n);
+  FMoveSources := nil;
+  if AProblem = '' then
+    FCtx.Log(mlInfo, Caption, Format(rsDirMoveDone, [FMoveDone, FMoveTarget]))
+  else
+  begin
+    msg := Format(rsDirMoveStopped, [FMoveDone, total, FMoveTarget, AProblem]);
+    FCtx.Log(mlError, Caption, msg);
+    RtMessageDlg(rsDirMenuMoveTo, msg, mtError, [mbOK], 0);
+  end;
+  // Racines LDIF recalees d'abord, la navigation ensuite.
+  rootsAsked := False;
+  if (FMoveDone > 0) or AUncertain then
+  begin
+    ReloadDns(parents);
+    rootsAsked := RefreshRoots;
+  end;
+  if FMoveFollow <> '' then
+    if rootsAsked then FRootsFollow := FMoveFollow else NavigateTo(FMoveFollow);
+  FMoveFollow := '';
+end;
+
+// Compte utilisateur d'apres les classes lues; un ordinateur AD herite de user et reste dehors.
+function IsUserClasses(const AClasses: string): Boolean;
+
+  function Has(const AName: string): Boolean;
+  begin
+    Result := Pos(',' + AName + ',', AClasses) > 0;
+  end;
+
+begin
+  Result := (Has('person') or Has('organizationalperson') or Has('inetorgperson') or
+    Has('posixaccount') or Has('user')) and not Has('computer');
+end;
+
+// Que des comptes: un paquet ou une OU dans le lot, et la commande reste grisee.
+function TDirectoryTab.ActionAreUsers: Boolean;
+var
+  node: TTreeNode;
+  i: Integer;
+begin
+  Result := False;
+  if IsMultiSelection then
+  begin
+    for i := 0 to FTree.SelectionCount - 1 do
+    begin
+      node := FTree.Selections[i];
+      if not NodeIsEntry(node) or not IsUserClasses(TNodeData(node.Data).Classes) then Exit;
+    end;
+    Result := True;
+    Exit;
+  end;
+  node := FTree.Selected;
+  Result := NodeIsEntry(node) and IsUserClasses(TNodeData(node.Data).Classes);
+end;
+
+function TDirectoryTab.SearchRootDn: string;
+var
+  node: TTreeNode;
+begin
+  Result := '';
+  node := FTree.Selected;
+  if IsMultiSelection then node := FTree.Selections[0];
+  if node = nil then Exit;
+  while node.Parent <> nil do node := node.Parent;
+  if node.Data <> nil then Result := TNodeData(node.Data).Dn;
+end;
+
+procedure TDirectoryTab.AddToGroupClick(Sender: TObject);
+var
+  dns: TStringArray;
+  dn: string;
+begin
+  if not ActionAreUsers then Exit;
+  dns := ActionDns;
+  if Length(dns) = 0 then Exit;
+  if FGroupMembers <> nil then
+  begin
+    RtMessageDlg(rsDirMenuAddToGroup, rsDirGroupBusy, mtWarning, [mbOK], 0);
+    Exit;
+  end;
+  dn := '';
+  if not PickDirectoryEntry(GetParentForm(Self), FCtx, FProfileUuid, rsDirMenuAddToGroup,
+      Format(rsDirGroupPrompt, [Length(dns)]), SearchRootDn, '', dn) then Exit;
+  dn := Trim(dn);
+  if dn = '' then Exit;
+  // DN figes ici: la selection peut bouger pendant la lecture du groupe.
+  FGroupMembers := dns;
+  FGroupDn := dn;
+  if FTasks.ReadEntry(GROUP_TAG, dn, GROUP_READ_ATTRS) = 0 then
+    AbortGroupAdd(rsDirNotConnected);
+end;
+
+procedure TDirectoryTab.GroupMessage(AMsg: TUiMessage; const ATag: string; AEnding: TTaskEnding);
+var
+  e: TLdapEntry;
+  model: TGroupModel;
+  dn: string;
+begin
+  if FGroupMembers = nil then Exit;
+  if AEnding = teStale then
+  begin
+    AbortGroupAdd(rsDirSessionReplaced);
+    Exit;
+  end;
+  if AMsg is TTaskFailedMsg then
+  begin
+    AbortGroupAdd(TTaskFailedMsg(AMsg).Text);
+    Exit;
+  end;
+  if not (AMsg is TEntryMsg) then Exit;
+  e := TEntryMsg(AMsg).Entry;
+  if ATag = GROUP_TAG then dn := FGroupDn else dn := FGroupMembers[FGroupUidPos];
+  if e = nil then
+  begin
+    AbortGroupAdd(Format(rsDirGroupUnread, [dn, ErrorToText(TEntryMsg(AMsg).Error)]));
+    Exit;
+  end;
+  if ATag = GROUP_TAG then
+  begin
+    model := DetectGroupModel(e, ServerKind);
+    if model.Kind = gkNotGroup then
+    begin
+      AbortGroupAdd(Format(rsDirNotAGroup, [e.Dn]));
+      Exit;
+    end;
+    FGroupEntry := e;
+    TEntryMsg(AMsg).Entry := nil;
+    // memberUid porte des identifiants: l'uid de chaque compte est relu, pas devine du RDN.
+    if not model.ValuesAreDns and (model.MemberAttr <> '') then
+    begin
+      FGroupUids := nil;
+      SetLength(FGroupUids, Length(FGroupMembers));
+      FGroupUidPos := 0;
+      if FTasks.ReadEntry(GROUP_UID_TAG, FGroupMembers[0], ['uid']) = 0 then
+        AbortGroupAdd(rsDirNotConnected);
+      Exit;
+    end;
+    FinishGroupAdd;
+    Exit;
+  end;
+  FGroupUids[FGroupUidPos] := string(e.FirstValue('uid', ''));
+  Inc(FGroupUidPos);
+  if FGroupUidPos < Length(FGroupMembers) then
+  begin
+    if FTasks.ReadEntry(GROUP_UID_TAG, FGroupMembers[FGroupUidPos], ['uid']) = 0 then
+      AbortGroupAdd(rsDirNotConnected);
+    Exit;
+  end;
+  FinishGroupAdd;
+end;
+
+procedure TDirectoryTab.FinishGroupAdd;
+var
+  model: TGroupModel;
+  change: TLdapChange;
+  err, note, reason: string;
+  skipped, total: Integer;
+  rules: TDnCaseRules;
+begin
+  model := DetectGroupModel(FGroupEntry, ServerKind);
+  rules := TDnCaseRules.Create(Conn);
+  try
+    change := PlanAddMembers(FGroupEntry, model, FGroupMembers, FGroupUids, skipped, err,
+      @rules.Folds, @rules.Canon);
+  finally
+    rules.Free;
+  end;
+  total := Length(FGroupMembers);
+  ResetGroupAdd;
+  if change = nil then
+  begin
+    RtMessageDlg(rsDirMenuAddToGroup, err, mtWarning, [mbOK], 0);
+    Exit;
+  end;
+  note := Format(rsDirGroupNote, [GroupKindName(model.Kind), total - skipped, total]);
+  if skipped > 0 then note := note + ' ' + Format(rsDirGroupSkipped, [skipped]);
+  if (SubmitWrite(GetParentForm(Self), FCtx, FTasks, VIEW_WRITE_TAG, change, '', reason, note) = 0) and
+     (reason <> '') then
+    RtMessageDlg(rsDirMenuAddToGroup, reason, mtWarning, [mbOK], 0);
+end;
+
+procedure TDirectoryTab.AbortGroupAdd(const AReason: string);
+begin
+  ResetGroupAdd;
+  FCtx.Log(mlWarning, Caption, AReason);
+  RtMessageDlg(rsDirMenuAddToGroup, AReason, mtWarning, [mbOK], 0);
+end;
+
+procedure TDirectoryTab.ResetGroupAdd;
+begin
+  FTasks.Cancel(GROUP_TAG);
+  FTasks.Cancel(GROUP_UID_TAG);
+  FGroupDn := '';
+  FGroupMembers := nil;
+  FGroupUids := nil;
+  FGroupUidPos := 0;
+  FreeAndNil(FGroupEntry);
+end;
+
 procedure TDirectoryTab.DeleteClick(Sender: TObject);
 begin
   DeleteSelected;
@@ -1919,7 +2780,15 @@ var
   node: TTreeNode;
   change: TLdapChange;
   announced: Boolean;
+  dns: TStringArray;
 begin
+  if IsMultiSelection then
+  begin
+    // Entrees et OU melangees: une seule enumeration en sous-arbre, un seul apercu.
+    dns := SelectedEntryDns;
+    if Length(dns) > 0 then StartDeletion(dns);
+    Exit;
+  end;
   c := Conn;
   dn := SelectedDn;
   if (c = nil) or (dn = '') then Exit;
@@ -1953,8 +2822,15 @@ begin
 end;
 
 function TDirectoryTab.StartSubtreeDeletion(const ADn: string): Boolean;
+begin
+  Result := StartDeletion([ADn]);
+end;
+
+function TDirectoryTab.StartDeletion(const ADns: array of string): Boolean;
 var
   c: TDirectoryConnection;
+  rules: TDnCaseRules;
+  started: Boolean;
 begin
   Result := False;
   c := Conn;
@@ -1965,7 +2841,14 @@ begin
       FProgress.Show;
     Exit;
   end;
-  if not FSubtree.Start(ADn, ServerSupportsControl(c.RootDse, LDAP_CONTROL_ASSERTION_OID)) then
+  rules := TDnCaseRules.Create(c);
+  try
+    started := FSubtree.StartMany(ADns, ServerSupportsControl(c.RootDse, LDAP_CONTROL_ASSERTION_OID),
+      @rules.Folds, @rules.Canon);
+  finally
+    rules.Free;
+  end;
+  if not started then
   begin
     FCtx.Log(mlError, Caption, ErrorToText(FSubtree.LastError));
     Exit;
@@ -2043,7 +2926,10 @@ begin
         if Length(changes) > SUBTREE_PREVIEW_MAX then SetLength(changes, SUBTREE_PREVIEW_MAX);
         for i := 0 to High(changes) do
           changes[i] := NewChange(ckDelete, FSubtree.Targets[i]);
-        note := Format(rsDirSubtreePreview, [FSubtree.Targets.Count, FSubtree.BaseDn]);
+        if FSubtree.Bases.Count > 1 then
+          note := Format(rsDirMultiPreview, [FSubtree.Targets.Count, FSubtree.Bases.Count])
+        else
+          note := Format(rsDirSubtreePreview, [FSubtree.Targets.Count, FSubtree.BaseDn]);
         if FSubtree.Targets.Count > SUBTREE_PREVIEW_MAX then
           note := note + LineEnding + Format(rsDirSubtreePreviewTruncated, [SUBTREE_PREVIEW_MAX]);
         // Pas de controle Assertion pour la suppression: on le dit avant de confirmer.
@@ -2078,6 +2964,7 @@ end;
 procedure TDirectoryTab.SubtreeWrite(AMsg: TWriteMsg);
 var
   outcome: TSubtreeOutcome;
+  note: string;
 begin
   if AMsg <> nil then
   begin
@@ -2105,8 +2992,12 @@ begin
       end;
     sdoFinished:
       begin
-        FinishSubtreeProgress(Format(rsDirSubtreeDone, [FSubtree.Deleted, FSubtree.BaseDn]), usOk);
-        FCtx.Log(mlInfo, Caption, Format(rsDirSubtreeDone, [FSubtree.Deleted, FSubtree.BaseDn]));
+        if FSubtree.Bases.Count > 1 then
+          note := Format(rsDirMultiDone, [FSubtree.Deleted, FSubtree.Bases.Count])
+        else
+          note := Format(rsDirSubtreeDone, [FSubtree.Deleted, FSubtree.BaseDn]);
+        FinishSubtreeProgress(note, usOk);
+        FCtx.Log(mlInfo, Caption, note);
         // Repli sans Assertion jamais silencieux: le compte va au journal.
         if FSubtree.AssertionAnnounced and (FSubtree.UnprotectedDeletes > 0) then
           FCtx.Log(mlWarning, Caption,
@@ -2133,7 +3024,7 @@ begin
   c := Conn;
   if c = nil then Exit;
   FProgress := TSubtreeProgressDialog.CreateProgress(nil, FSubtree.BaseDn,
-    c.Profile.DisplayEndpoint, c.Profile.EnvironmentBadge);
+    c.Profile.DisplayEndpoint, c.Profile.EnvironmentBadge, FSubtree.Bases.Count);
   // Possedee par la fenetre principale, donc toujours au-dessus: sinon un clic dans l'arbre
   // la cachait derriere, sans bouton dans la barre des taches pour la retrouver.
   if GetParentForm(Self) <> nil then
@@ -2181,26 +3072,68 @@ begin
     Result := Result + ' ' + Format(rsDirSubtreeUnconfirmed, [FSubtree.UnconfirmedDn]);
   if AReason <> '' then
     Result := Result + ' ' + AReason;
-  if (FSubtree.NotAttempted > 0) or (FSubtree.UnconfirmedDn <> '') then
+  if ((FSubtree.NotAttempted > 0) or (FSubtree.UnconfirmedDn <> '')) and (FSubtree.Bases.Count > 1) then
+    Result := Result + ' ' + rsDirMultiResume
+  else if (FSubtree.NotAttempted > 0) or (FSubtree.UnconfirmedDn <> '') then
     Result := Result + ' ' + Format(rsDirSubtreeResume, [FSubtree.BaseDn]);
 end;
 
-// D'apres la base de la suppression, jamais la selection: la fenetre de progression n'est pas
+// D'apres les bases de la suppression, jamais la selection: la fenetre de progression n'est pas
 // modale et la selection a pu bouger. Sinon une OU de 30000 entrees reste affichee, morte.
 procedure TDirectoryTab.TreeFollowSubtree;
 var
+  rules: TDnCaseRules;
   cmp: TDnComparer;
   base: TLdapDn;
-  node: TTreeNode;
+  dns: TStringArray;
+  i, n: Integer;
 begin
-  if not DnTryParse(FSubtree.BaseDn, base) or (DnRdnCount(base) = 0) then Exit;
-  cmp := TDnComparer.Create;
+  dns := nil;
+  SetLength(dns, FSubtree.Bases.Count);
+  n := 0;
+  rules := TDnCaseRules.Create(Conn);
+  cmp := rules.NewComparer;
   try
-    node := FindEntryNode(DnToString(DnParent(base)), cmp);
-    if node = nil then node := FindEntryNode(FSubtree.BaseDn, cmp);
-    if node <> nil then ReloadNode(node);
+    for i := 0 to FSubtree.Bases.Count - 1 do
+    begin
+      if not DnTryParse(FSubtree.Bases[i], base) or (DnRdnCount(base) = 0) then Continue;
+      if FindEntryNode(DnToString(DnParent(base)), cmp) <> nil then
+        dns[n] := DnToString(DnParent(base))
+      else
+        dns[n] := FSubtree.Bases[i];
+      Inc(n);
+    end;
   finally
     cmp.Free;
+    rules.Free;
+  end;
+  SetLength(dns, n);
+  ReloadDns(dns);
+  RefreshRoots;
+end;
+
+// Seuls les plus externes sont relus: recharger un ancetre detruit les noeuds de ses descendants.
+procedure TDirectoryTab.ReloadDns(const ADns: array of string);
+var
+  rules: TDnCaseRules;
+  cmp: TDnComparer;
+  kept: TStringArray;
+  node: TTreeNode;
+  i: Integer;
+begin
+  // Casse selon le schema: un parent tape a la main ne s'ecrit pas toujours comme le serveur le rend.
+  rules := TDnCaseRules.Create(Conn);
+  cmp := rules.NewComparer;
+  try
+    kept := DnOutermost(ADns, @rules.Folds, @rules.Canon);
+    for i := 0 to High(kept) do
+    begin
+      node := FindEntryNode(kept[i], cmp);
+      if node <> nil then ReloadNode(node);
+    end;
+  finally
+    cmp.Free;
+    rules.Free;
   end;
 end;
 

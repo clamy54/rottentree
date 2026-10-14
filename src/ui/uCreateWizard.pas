@@ -14,7 +14,7 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, StdCtrls, ExtCtrls, Grids, Dialogs, Graphics, LCLType, Menus,
   uAppContext, uUiKit, uRtList, uRtCombo, uRtCheck, uEntryCreationPlan, uLdapEntry, uUiInbox, uIcons,
-  uNextId, uRtButton, uRtWizard, uTaskTracker, uTaskDialog, uRtSecretEdit;
+  uNextId, uRtButton, uRtWizard, uTaskTracker, uTaskDialog, uRtSecretEdit, uGroupModel, uChangeSet;
 
 type
   TWizardPage = (wpStructural, wpAuxiliary, wpNaming, wpAttributes, wpPreview, wpResult);
@@ -24,11 +24,31 @@ type
     Text: string;
     Bytes: RawByteString;
     FromFile: Boolean;
+    // impose et non envoye (classe, serveur)
     Locked: Boolean;
+    // envoye tel quel, intouchable dans la grille (mot de passe AD encode par le modele)
+    Sealed: Boolean;
     Note: string;
   end;
 
   TReadPurpose = (rpNone, rpExists, rpPassword, rpEnable, rpReconcile);
+
+  // Plan deja rempli (modele): l'assistant s'ouvre sur l'apercu. Les listes vont par paires.
+  TCreatePrefill = record
+    Structural: string;
+    Auxiliaries: TStringArray;
+    RdnAttr: string;
+    RdnText: string;
+    Attrs: TStringArray;
+    Texts: TStringArray;
+    SecretAttrs: TStringArray;
+    Secrets: array of RawByteString;
+    // AD: mot de passe en clair, envoye avec le compte dans la meme requete d'ajout
+    AdPassword: RawByteString;
+    AdMustChange, AdNeverExpires, AdDisabled: Boolean;
+    AdAccountOptions: Boolean;
+    Joins: TGroupJoins;
+  end;
 
   TCreateWizard = class(TTaskDialog)
   private
@@ -80,6 +100,16 @@ type
     FIdentity: RawByteString;
     FReconcileFound: Boolean;
     FReconcileGuid: RawByteString;
+    FJoins: TGroupJoins;
+    FJoinChanges: array of TLdapChange;
+    FJoinStep: Integer;
+    procedure AppendJoinSteps;
+    function StepCaption(AIndex: Integer): string;
+    procedure SetStepAt(AIndex: Integer; AOutcome: TStepOutcome; const ADetail: string);
+    procedure ClearJoinChanges;
+    procedure StartNextJoin;
+    function StepsRunning: Boolean;
+    function AllStepsDone: Boolean;
     procedure BuildUi;
     function GetPage: TWizardPage;
     procedure LeavePage(Sender: TObject; AFrom, ATo: Integer; var AAllow: Boolean);
@@ -118,6 +148,7 @@ type
     procedure GridDblClick(Sender: TObject);
     function IsSecretRow(ARow: Integer): Boolean;
     function SecretsAllowed: Boolean;
+    function RowFrozen(AIndex: Integer): Boolean;
     procedure SetSecret(ARow: Integer);
     procedure StartNextId(ARow: Integer);
     procedure HandleIdResult(AMsg: TUiMessage);
@@ -149,6 +180,10 @@ type
     constructor CreateFor(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid,
       AParentDn: string);
     destructor Destroy; override;
+    // Faux: le plan n'a pas pu etre pose jusqu'au bout, l'assistant reste sur la page fautive.
+    function Prefill(const APrefill: TCreatePrefill): Boolean;
+    // Attend l'issue sans afficher l'assistant. Faux: toujours en attente.
+    function AwaitSteps(ATimeoutMs: Integer): Boolean;
     function GoNext: Boolean;
     procedure GoBack;
     procedure ChooseStructural(const AName: string);
@@ -277,6 +312,9 @@ resourcestring
   rsCwStepAdd = 'Add the entry';
   rsCwStepPassword = 'Set the password';
   rsCwStepEnable = 'Enable the account';
+  rsCwStepJoin = 'Add to %s';
+  rsCwStepJoinAny = 'Add to a group';
+  rsCwJoinNote = 'Then the entry is added to %d group(s): one more operation each, shown below.';
   rsCwOutPending = 'not done';
   rsCwOutNotSent = 'not sent';
   rsCwOutRefused = 'refused';
@@ -324,14 +362,25 @@ resourcestring
 
 function ShowCreateWizard(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid,
   AParentDn: string): string;
+// ADirect: plan sans reproche, envoye des la confirmation sans montrer l'assistant.
+function ShowCreateWizardPrefilled(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid,
+  AParentDn: string; const APrefill: TCreatePrefill; ADirect: Boolean = False): string; overload;
+// AAddOutcome: issue de l'ajout, pour qui doit savoir si un compte a pu naitre sans le dire.
+function ShowCreateWizardPrefilled(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid,
+  AParentDn: string; const APrefill: TCreatePrefill; ADirect: Boolean;
+  out AAddOutcome: TStepOutcome): string; overload;
 
 implementation
 
 uses
-  uAdObjectPlan, uConnections, uConnectionProfile, uDirectoryWorker, uLdapSchema, uLdapErrors, uChangeSet,
+  uAdObjectPlan, uConnections, uConnectionProfile, uDirectoryWorker, uLdapSchema, uLdapErrors,
   uServerKind, uRtMessage, uTheme, uAttributeCodec, uLdif, uSensitive,
   uAccountState, uPasswordSchemes, uRtBytes, uValueFile, uCancel, uPasswordWork, uMenuBar,
   uSearchModel, uPasswordDialog, uAdAccountPlan, uDirectoryService;
+
+const
+  // Au-dela, on montre l'assistant et son etape en attente plutot qu'une interface figee.
+  DIRECT_WAIT_MS = 2500;
 
 function ShowCreateWizard(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid,
   AParentDn: string): string;
@@ -350,6 +399,54 @@ begin
   w := TCreateWizard.CreateFor(AOwner, ACtx, AProfileUuid, AParentDn);
   try
     w.ShowModal;
+    Result := w.CreatedDn;
+  finally
+    w.Free;
+  end;
+end;
+
+function ShowCreateWizardPrefilled(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid,
+  AParentDn: string; const APrefill: TCreatePrefill; ADirect: Boolean): string;
+var
+  outcome: TStepOutcome;
+begin
+  Result := ShowCreateWizardPrefilled(AOwner, ACtx, AProfileUuid, AParentDn, APrefill, ADirect, outcome);
+end;
+
+function ShowCreateWizardPrefilled(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid,
+  AParentDn: string; const APrefill: TCreatePrefill; ADirect: Boolean;
+  out AAddOutcome: TStepOutcome): string;
+var
+  w: TCreateWizard;
+  c: TDirectoryConnection;
+  ready: Boolean;
+begin
+  Result := '';
+  AAddOutcome := sotNotSent;
+  c := ACtx.Connections.Find(AProfileUuid);
+  if (c = nil) or not c.IsReady then Exit;
+  if c.Schema = nil then
+  begin
+    RtMessageDlg(rsCwTitle, rsCwNoSchema, mtWarning, [mbOK], 0);
+    Exit;
+  end;
+  w := TCreateWizard.CreateFor(AOwner, ACtx, AProfileUuid, AParentDn);
+  try
+    ready := w.Prefill(APrefill);
+    if ready and ADirect and (Length(w.PreviewIssues) = 0) and (w.FEntry <> nil) and
+       not c.Profile.ReadOnly then
+    begin
+      w.SubmitAdd;
+      if w.Page <> wpResult then Exit;
+      // Le serveur a dit oui a tout: rien de plus a montrer. Tout le reste s'affiche.
+      if w.AwaitSteps(DIRECT_WAIT_MS) and w.AllStepsDone then
+      begin
+        AAddOutcome := w.StepOutcome(cskAdd);
+        Exit(w.CreatedDn);
+      end;
+    end;
+    w.ShowModal;
+    AAddOutcome := w.StepOutcome(cskAdd);
     Result := w.CreatedDn;
   finally
     w.Free;
@@ -375,6 +472,7 @@ begin
   case AKind of
     cskSetPassword: Result := rsCwStepPassword;
     cskEnable: Result := rsCwStepEnable;
+    cskJoinGroup: Result := rsCwStepJoinAny;
   else
     Result := rsCwStepAdd;
   end;
@@ -424,6 +522,7 @@ begin
   // n'herite pas de nos secrets.
   for i := 0 to High(FRows) do
     if FRows[i].Bytes <> '' then WipeString(FRows[i].Bytes);
+  ClearJoinChanges;
   FEntry.Free;
   FPlan.Free;
   FAuxChosen.Free;
@@ -601,6 +700,201 @@ begin
     FNotice.Caption := rsCwReadOnly;
     FNotice.Visible := True;
   end;
+end;
+
+function TCreateWizard.Prefill(const APrefill: TCreatePrefill): Boolean;
+var
+  i, j: Integer;
+  r: TWizRow;
+  placed: Boolean;
+  dn, err: string;
+begin
+  Result := False;
+  FJoins := Copy(APrefill.Joins, 0, Length(APrefill.Joins));
+  // Avant le nommage: les etapes s'y preparent, et sans etape a part si le mot de passe part avec.
+  FPlan.AdPasswordInAdd := (FPlan.Provider = pkActiveDirectory) and (APrefill.AdPassword <> '');
+  FPlan.AdMustChange := APrefill.AdMustChange;
+  FPlan.AdNeverExpires := APrefill.AdNeverExpires;
+  FPlan.AdDisabled := APrefill.AdDisabled;
+  FPlan.AdAccountOptions := APrefill.AdAccountOptions;
+  ChooseStructural(APrefill.Structural);
+  if not SameText(FStructChosen, APrefill.Structural) then Exit;
+  FAuxChosen.Clear;
+  for i := 0 to High(APrefill.Auxiliaries) do
+    FAuxChosen.Add(APrefill.Auxiliaries[i]);
+  FillAuxList;
+  UpdateChosenLabels;
+  FWizard.ShowPage(Ord(wpAuxiliary));
+  if not EnterNaming then Exit;
+  FWizard.ShowPage(Ord(wpNaming));
+  FRdnAttr.ItemIndex := FRdnAttr.Items.IndexOf(APrefill.RdnAttr);
+  if FRdnAttr.ItemIndex < 0 then Exit;
+  FRdnAttr2.ItemIndex := 0;
+  FRdnValue.Text := APrefill.RdnText;
+  NamingChange(nil);
+  if not BuildCreationDn(FPlan.ParentDn, FPlan.Rdn, dn, err) then Exit;
+  EnterAttributes;
+  for i := 0 to High(APrefill.Attrs) do
+  begin
+    if i > High(APrefill.Texts) then Break;
+    placed := False;
+    for j := 0 to High(FRows) do
+      if SameText(FRows[j].Attr, APrefill.Attrs[i]) and not RowFrozen(j) and
+         (FRows[j].Text = '') and not IsSecretRow(j) then
+      begin
+        FRows[j].Text := APrefill.Texts[i];
+        placed := True;
+        Break;
+      end;
+    if placed then Continue;
+    r := Default(TWizRow);
+    r.Attr := APrefill.Attrs[i];
+    r.Text := APrefill.Texts[i];
+    SetLength(FRows, Length(FRows) + 1);
+    FRows[High(FRows)] := r;
+  end;
+  // Valeurs deja calculees par les outils de mot de passe: copiees, l'appelant efface les siennes.
+  if SecretsAllowed then
+    for i := 0 to High(APrefill.SecretAttrs) do
+    begin
+      if (i > High(APrefill.Secrets)) or (APrefill.Secrets[i] = '') then Continue;
+      r := Default(TWizRow);
+      r.Attr := APrefill.SecretAttrs[i];
+      r.Bytes := Copy(APrefill.Secrets[i], 1, MaxInt);
+      SetLength(FRows, Length(FRows) + 1);
+      FRows[High(FRows)] := r;
+    end;
+  if FPlan.AdPasswordInAdd then
+  begin
+    // Encode ici et scelle: l'outil de hachage LDAP n'a rien a y faire.
+    r := Default(TWizRow);
+    r.Attr := 'unicodePwd';
+    r.Bytes := EncodeUnicodePwd(APrefill.AdPassword);
+    r.Sealed := True;
+    SetLength(FRows, Length(FRows) + 1);
+    FRows[High(FRows)] := r;
+  end
+  else
+    FMustChange.Checked := APrefill.AdMustChange;
+  Inc(FRowsGen);
+  RefreshGrid;
+  CommitGrid;
+  FWizard.ShowPage(Ord(wpAttributes));
+  EnterPreview;
+  FWizard.ShowPage(Ord(wpPreview));
+  Result := True;
+end;
+
+function TCreateWizard.StepsRunning: Boolean;
+var
+  i: Integer;
+begin
+  if StepOutcome(cskAdd) = sotPending then Exit(True);
+  Result := False;
+  // Les inscriptions partent d'elles-memes apres un ajout reussi: en attente veut dire en route.
+  if StepOutcome(cskAdd) in [sotApplied, sotAppliedUnverified] then
+    for i := 0 to High(FPlan.Steps) do
+      if (FPlan.Steps[i].Kind = cskJoinGroup) and (FPlan.Steps[i].Outcome = sotPending) then
+        Exit(True);
+end;
+
+function TCreateWizard.AllStepsDone: Boolean;
+var
+  i: Integer;
+begin
+  Result := StepOutcome(cskAdd) = sotApplied;
+  for i := 0 to High(FPlan.Steps) do
+    if FPlan.Steps[i].Kind = cskJoinGroup then
+      Result := Result and (FPlan.Steps[i].Outcome in [sotApplied, sotAppliedUnverified])
+    else if FPlan.Steps[i].Kind <> cskAdd then
+      Result := False;
+end;
+
+function TCreateWizard.AwaitSteps(ATimeoutMs: Integer): Boolean;
+var
+  t0: QWord;
+begin
+  t0 := GetTickCount64;
+  while StepsRunning and (GetTickCount64 - t0 < QWord(ATimeoutMs)) do
+  begin
+    Application.ProcessMessages;
+    Sleep(5);
+  end;
+  Result := not StepsRunning;
+end;
+
+procedure TCreateWizard.AppendJoinSteps;
+var
+  i, n: Integer;
+begin
+  for i := 0 to High(FJoins) do
+  begin
+    n := Length(FPlan.Steps);
+    SetLength(FPlan.Steps, n + 1);
+    FPlan.Steps[n] := Default(TCreationStep);
+    FPlan.Steps[n].Kind := cskJoinGroup;
+    FPlan.Steps[n].Outcome := sotPending;
+  end;
+end;
+
+function TCreateWizard.StepCaption(AIndex: Integer): string;
+var
+  i, k: Integer;
+begin
+  if (AIndex < 0) or (AIndex > High(FPlan.Steps)) then Exit('');
+  if FPlan.Steps[AIndex].Kind <> cskJoinGroup then Exit(StepText(FPlan.Steps[AIndex].Kind));
+  k := 0;
+  for i := 0 to AIndex - 1 do
+    if FPlan.Steps[i].Kind = cskJoinGroup then Inc(k);
+  if k <= High(FJoins) then Result := Format(rsCwStepJoin, [FJoins[k].GroupDn])
+  else Result := StepText(cskJoinGroup);
+end;
+
+procedure TCreateWizard.SetStepAt(AIndex: Integer; AOutcome: TStepOutcome; const ADetail: string);
+begin
+  if (AIndex < 0) or (AIndex > High(FPlan.Steps)) then Exit;
+  FPlan.Steps[AIndex].Outcome := AOutcome;
+  FPlan.Steps[AIndex].Detail := ADetail;
+  RefreshSteps;
+end;
+
+procedure TCreateWizard.ClearJoinChanges;
+var
+  i: Integer;
+begin
+  for i := 0 to High(FJoinChanges) do
+    FJoinChanges[i].Free;
+  FJoinChanges := nil;
+end;
+
+// Une inscription a la fois. Un refus n'arrete pas les suivantes: chaque groupe est une affaire a part.
+procedure TCreateWizard.StartNextJoin;
+var
+  i, k: Integer;
+  change: TLdapChange;
+  werr: TLdapError;
+begin
+  k := -1;
+  for i := 0 to High(FPlan.Steps) do
+  begin
+    if FPlan.Steps[i].Kind <> cskJoinGroup then Continue;
+    Inc(k);
+    if (FPlan.Steps[i].Outcome <> sotPending) or (k > High(FJoinChanges)) or
+       (FJoinChanges[k] = nil) then Continue;
+    change := FJoinChanges[k];
+    // Write prend possession du changement, meme quand il refuse.
+    FJoinChanges[k] := nil;
+    FWriteStep := cskJoinGroup;
+    FJoinStep := i;
+    if Tasks.Write('write', change, '', werr) = 0 then
+    begin
+      SetStepAt(i, sotNotSent, ErrorToText(werr));
+      Continue;
+    end;
+    FWizard.UpdateButtons;
+    Exit;
+  end;
+  FWizard.UpdateButtons;
 end;
 
 function TCreateWizard.GetPage: TWizardPage;
@@ -982,6 +1276,7 @@ begin
     Exit;
   end;
   PrepareSteps(FPlan, FAnalysis);
+  AppendJoinSteps;
   FillRdnChoices;
   Result := True;
 end;
@@ -1178,9 +1473,14 @@ end;
 
 // Hors Active Directory, userPassword se pose a la creation (valeur calculee par les outils).
 // AD veut unicodePwd, en etape distincte une fois l'entree creee.
+function TCreateWizard.RowFrozen(AIndex: Integer): Boolean;
+begin
+  Result := FRows[AIndex].Locked or FRows[AIndex].Sealed;
+end;
+
 function TCreateWizard.SecretsAllowed: Boolean;
 begin
-  Result := FPlan.Provider <> pkActiveDirectory;
+  Result := (FPlan.Provider <> pkActiveDirectory) or FPlan.AdPasswordInAdd;
 end;
 
 function TCreateWizard.IsSecretRow(ARow: Integer): Boolean;
@@ -1210,7 +1510,7 @@ var
   gen: Int64;
   attr: string;
 begin
-  if not SecretsAllowed or not IsSecretRow(ARow) or FRows[ARow].Locked then Exit;
+  if not SecretsAllowed or not IsSecretRow(ARow) or RowFrozen(ARow) then Exit;
   if (FFileTask <> 0) or Tasks.Pending('nextid') then Exit;
   c := FCtx.Connections.Find(FProfileUuid);
   if c = nil then Exit;
@@ -1304,7 +1604,7 @@ var
 begin
   i := RowOfGrid(aRow);
   c := FCtx.Connections.Find(FProfileUuid);
-  if (aCol <> 1) or (i < 0) or FRows[i].Locked or FRows[i].FromFile or IsSecretRow(i) or (c = nil) or
+  if (aCol <> 1) or (i < 0) or RowFrozen(i) or FRows[i].FromFile or IsSecretRow(i) or (c = nil) or
      ((FFileTask <> 0) and (i = FFileRow)) then
   begin
     Editor := nil;
@@ -1335,7 +1635,7 @@ var
 begin
   if FGrid.EditorMode then FGrid.EditorMode := False;
   for i := 0 to High(FRows) do
-    if not FRows[i].Locked and not FRows[i].FromFile and not IsSecretRow(i) then
+    if not RowFrozen(i) and not FRows[i].FromFile and not IsSecretRow(i) then
       FRows[i].Text := FGrid.Cells[1, i + 1];
   c := FCtx.Connections.Find(FProfileUuid);
   FEncodeIssues := nil;
@@ -1382,7 +1682,7 @@ var
 begin
   CommitGrid;
   for i := 0 to High(FRows) do
-    if SameText(FRows[i].Attr, AAttr) and not FRows[i].Locked and (FRows[i].Text = '') and
+    if SameText(FRows[i].Attr, AAttr) and not RowFrozen(i) and (FRows[i].Text = '') and
        not FRows[i].FromFile then
     begin
       FRows[i].Text := AText;
@@ -1420,7 +1720,7 @@ var
   r: TWizRow;
 begin
   i := RowOfGrid(FGrid.Row);
-  if (i < 0) or FRows[i].Locked then Exit;
+  if (i < 0) or RowFrozen(i) then Exit;
   CommitGrid;
   r := Default(TWizRow);
   r.Attr := FRows[i].Attr;
@@ -1438,7 +1738,7 @@ var
   i, j, n: Integer;
 begin
   i := RowOfGrid(FGrid.Row);
-  if (i < 0) or FRows[i].Locked then Exit;
+  if (i < 0) or RowFrozen(i) then Exit;
   CommitGrid;
   n := 0;
   for j := 0 to High(FRows) do
@@ -1463,12 +1763,12 @@ var
   od: TOpenDialog;
 begin
   i := RowOfGrid(FGrid.Row);
-  if (i < 0) or FRows[i].Locked or IsSecretRow(i) or (FFileTask <> 0) then Exit;
+  if (i < 0) or RowFrozen(i) or IsSecretRow(i) or (FFileTask <> 0) then Exit;
   od := TOpenDialog.Create(Self);
   try
     od.Filter := 'All files|*.*';
     if not od.Execute then Exit;
-    if (i > High(FRows)) or FRows[i].Locked then Exit;
+    if (i > High(FRows)) or RowFrozen(i) then Exit;
     CommitGrid;
     FFileRow := i;
     FFileGen := FRowsGen;
@@ -1488,7 +1788,7 @@ var
 begin
   CommitGrid;
   for i := 0 to High(FRows) do
-    if SameText(FRows[i].Attr, AAttr) and not FRows[i].Locked then
+    if SameText(FRows[i].Attr, AAttr) and not RowFrozen(i) then
     begin
       FFileRow := i;
       FFileGen := FRowsGen;
@@ -1505,7 +1805,7 @@ var
   i: Integer;
 begin
   for i := 0 to High(FRows) do
-    if SameText(FRows[i].Attr, AAttr) and not FRows[i].Locked and not FRows[i].FromFile then
+    if SameText(FRows[i].Attr, AAttr) and not RowFrozen(i) and not FRows[i].FromFile then
     begin
       FGrid.Cells[1, i + 1] := AText;
       Exit;
@@ -1517,7 +1817,7 @@ var
   i: Integer;
 begin
   for i := 0 to High(FRows) do
-    if SameText(FRows[i].Attr, AAttr) and not FRows[i].Locked then
+    if SameText(FRows[i].Attr, AAttr) and not RowFrozen(i) then
     begin
       FGrid.Row := i + 1;
       RemoveValueClick(nil);
@@ -1573,7 +1873,7 @@ begin
   FRowMenu.Items.Clear;
   FMenuRow := ARow;
   if (ARow < 0) or (ARow > High(FRows)) then Exit;
-  if IsSecretRow(ARow) and SecretsAllowed and not FRows[ARow].Locked then
+  if IsSecretRow(ARow) and SecretsAllowed and not RowFrozen(ARow) then
   begin
     item := TMenuItem.Create(FRowMenu);
     item.Caption := rsCwSetSecretMenu;
@@ -1581,7 +1881,7 @@ begin
     item.Enabled := not Tasks.Pending('nextid') and (FFileTask = 0) and not Tasks.WritesInFlight;
     FRowMenu.Items.Add(item);
   end;
-  if IsNextIdAttribute(FRows[ARow].Attr, FPlan.Provider) and not FRows[ARow].Locked then
+  if IsNextIdAttribute(FRows[ARow].Attr, FPlan.Provider) and not RowFrozen(ARow) then
   begin
     item := TMenuItem.Create(FRowMenu);
     item.Caption := Format(rsCwNextIdMenu, [AttrBaseName(FRows[ARow].Attr)]);
@@ -1602,7 +1902,7 @@ var
 begin
   c := FCtx.Connections.Find(FProfileUuid);
   if (c = nil) or not c.IsReady or Tasks.Pending('nextid') or (FFileTask <> 0) then Exit;
-  if (ARow < 0) or (ARow > High(FRows)) or FRows[ARow].Locked or
+  if (ARow < 0) or (ARow > High(FRows)) or RowFrozen(ARow) or
      not IsNextIdAttribute(FRows[ARow].Attr, FPlan.Provider) then Exit;
   CommitGrid;
   FIdBase := NextIdBaseFor(FCtx.Connections.Find(FProfileUuid), FPlan.ParentDn);
@@ -1673,7 +1973,7 @@ begin
       Exit;
     end;
     if (Page <> wpAttributes) or (FIdGen <> FRowsGen) or (FIdRow > High(FRows)) or
-       FRows[FIdRow].Locked or FRows[FIdRow].FromFile or
+       RowFrozen(FIdRow) or FRows[FIdRow].FromFile or
        not SameText(AttrBaseName(FRows[FIdRow].Attr), FIdAttr) then
     begin
       FAttrNote.Caption := Format(rsCwNextIdStale, [FIdAttr, candidate]);
@@ -1716,7 +2016,7 @@ var
   i: Integer;
 begin
   for i := 0 to High(FRows) do
-    if SameText(FRows[i].Attr, AAttr) and not FRows[i].Locked then
+    if SameText(FRows[i].Attr, AAttr) and not RowFrozen(i) then
     begin
       StartNextId(i);
       Exit;
@@ -1785,7 +2085,7 @@ begin
     end;
     FPreview.Lines.Add(rsCwStepsTitle);
     for i := 0 to High(FPlan.Steps) do
-      FPreview.Lines.Add(Format('# %d. %s', [i + 1, StepText(FPlan.Steps[i].Kind)]));
+      FPreview.Lines.Add(Format('# %d. %s', [i + 1, StepCaption(i)]));
     StartExistsCheck;
   end
   else
@@ -1925,9 +2225,12 @@ end;
 procedure TCreateWizard.SubmitAdd;
 var
   change: TLdapChange;
+  all: array of TLdapChange;
   werr: TLdapError;
-  reason: string;
+  reason, note: string;
+  i: Integer;
 begin
+  all := nil;
   if (FEntry = nil) or HasErrors(FPreviewIssues) or Tasks.WritesInFlight then Exit;
   if not CheckIdentityOfSession(reason) then
   begin
@@ -1939,11 +2242,31 @@ begin
   change := NewChange(ckAdd, FEntry.Dn);
   change.Entry.Free;
   change.Entry := FEntry.Clone;
+  // Inscriptions calculees sur l'entree qui part, pas sur celle d'avant un retour en arriere.
+  ClearJoinChanges;
+  SetLength(FJoinChanges, Length(FJoins));
+  SetLength(all, Length(FJoins) + 1);
+  all[0] := change;
+  note := '';
+  for i := 0 to High(FJoins) do
+  begin
+    FJoinChanges[i] := GroupJoinChange(FJoins[i], FEntry, reason);
+    if FJoinChanges[i] = nil then
+    begin
+      change.Free;
+      ClearJoinChanges;
+      RtMessageDlg(rsCwTitle, FJoins[i].GroupDn + ': ' + reason, mtWarning, [mbOK], 0);
+      Exit;
+    end;
+    all[i + 1] := FJoinChanges[i];
+  end;
+  if Length(FJoins) > 0 then note := Format(rsCwJoinNote, [Length(FJoins)]);
   // Session et schema verifies avant la confirmation, retrouves inchanges apres: le plan revu
   // est celui qui part, dans cette session.
-  if not ConfirmWrite(Self, FCtx, Tasks, [change], reason) then
+  if not ConfirmWrite(Self, FCtx, Tasks, all, reason, note) then
   begin
     change.Free;
+    ClearJoinChanges;
     if reason <> '' then
     begin
       RtMessageDlg(rsCwTitle, reason, mtWarning, [mbOK], 0);
@@ -2035,7 +2358,7 @@ var
 begin
   FSteps.Clear;
   for i := 0 to High(FPlan.Steps) do
-    FSteps.AddRow([StepText(FPlan.Steps[i].Kind), OutcomeText(FPlan.Steps[i].Outcome),
+    FSteps.AddRow([StepCaption(i), OutcomeText(FPlan.Steps[i].Outcome),
       FPlan.Steps[i].Detail]);
   FWizard.UpdateButtons;
 end;
@@ -2122,6 +2445,7 @@ begin
   FCreatedDn := FEntry.Dn;
   FReconcileFound := False;
   FReconcileGuid := '';
+  StartNextJoin;
   FWizard.UpdateButtons;
 end;
 
@@ -2240,7 +2564,7 @@ begin
     // Le resultat ne va qu'a la ligne visee au lancement (meme generation, page, attribut),
     // sinon il est ecarte: mieux vaut recharger qu'ecraser la mauvaise valeur.
     if (Page <> wpAttributes) or (FFileGen <> FRowsGen) or (FFileRow < 0) or
-       (FFileRow > High(FRows)) or FRows[FFileRow].Locked or
+       (FFileRow > High(FRows)) or RowFrozen(FFileRow) or
        not SameText(FRows[FFileRow].Attr, FFileAttr) then
     begin
       FCtx.Log(mlWarning, rsCwTitle, Format(rsCwLoadStale, [f.Path, FFileAttr]));
@@ -2268,9 +2592,12 @@ begin
   begin
     if ATask.Tag = 'nextid' then DropNextId
     else if ATask.Tag = 'write' then
+    begin
       // Ecriture partie dans l'ancienne session: rien n'est affirme.
-      // Ni succes ni echec, un doute documente.
-      SetStep(FWriteStep, sotUnknown, rsCwSessionLost)
+      // Ni succes ni echec, un doute documente. Les inscriptions restantes ne partent pas.
+      if FWriteStep = cskJoinGroup then SetStepAt(FJoinStep, sotUnknown, rsCwSessionLost)
+      else SetStep(FWriteStep, sotUnknown, rsCwSessionLost);
+    end
     else if ATask.Tag = 'read' then
     begin
       FReadPurpose := rpNone;
@@ -2297,7 +2624,13 @@ begin
   step := FWriteStep;
   if AMsg is TTaskFailedMsg then
   begin
-    SetStep(step, sotUnknown, TTaskFailedMsg(AMsg).Text);
+    if step = cskJoinGroup then
+    begin
+      SetStepAt(FJoinStep, sotUnknown, TTaskFailedMsg(AMsg).Text);
+      StartNextJoin;
+    end
+    else
+      SetStep(step, sotUnknown, TTaskFailedMsg(AMsg).Text);
     Exit;
   end;
   if not (AMsg is TWriteMsg) then Exit;
@@ -2327,7 +2660,15 @@ begin
     if m.Result.Sent then outcome := sotRefused else outcome := sotNotSent;
     detail := ErrorToText(m.Result.Error);
   end;
+  if step = cskJoinGroup then
+  begin
+    SetStepAt(FJoinStep, outcome, detail);
+    StartNextJoin;
+    Exit;
+  end;
   SetStep(step, outcome, detail);
+  // L'entree existe: les inscriptions peuvent partir. Sur une issue inconnue, rien ne part.
+  if (step = cskAdd) and (outcome in [sotApplied, sotAppliedUnverified]) then StartNextJoin;
 end;
 
 procedure TCreateWizard.HandleReadResult(AMsg: TUiMessage);

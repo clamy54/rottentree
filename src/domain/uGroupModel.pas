@@ -12,7 +12,7 @@ unit uGroupModel;
 interface
 
 uses
-  SysUtils, Classes, uLdapEntry, uChangeSet, uConnectionProfile, uSearchModel;
+  SysUtils, Classes, uLdapEntry, uChangeSet, uConnectionProfile, uSearchModel, uLdapDn;
 
 const
   AD_IN_CHAIN_RULE = '1.2.840.113556.1.4.1941';
@@ -43,6 +43,14 @@ type
     // member. Ils sont bien la, AD prefere simplement ne pas en parler.
     HasPrimaryMembers: Boolean;
   end;
+
+  TGroupJoin = record
+    GroupDn: string;
+    Attr: string;
+    // valeur: le DN de l'entree, sinon son uid
+    ByDn: Boolean;
+  end;
+  TGroupJoins = array of TGroupJoin;
 
   TMembershipKind = (
     mkDirect,
@@ -116,6 +124,9 @@ resourcestring
   rsGroupDynamic = 'dynamic group: members come from its criteria (%s), edit the criteria instead';
   rsGroupLastMember = 'the schema requires at least one %s value; add another member first';
   rsGroupAlreadyMember = 'already a direct member';
+  rsGroupAllMembers = 'all of them are already direct members';
+  rsGroupMembersPartial = 'the member list of this group could not be read completely, so existing ' +
+    'members cannot be told apart: nothing was sent. Add them one at a time from Group memberships';
   rsGroupNotMember = 'not a direct member';
   rsGroupNeedUid = 'this group lists members by uid: the member has no uid value';
   rsGroupNotDn = '"%s" is not a DN: choose the entry in the search results, or type its full DN';
@@ -145,15 +156,26 @@ resourcestring
   rsMemberLimit = 'exploration bound reached';
 
 function DetectGroupModel(AEntry: TLdapEntry; AServer: TProviderKind): TGroupModel;
-function DnIdentityKey(const ADn: string): string;
+// Comment inscrire dans ce groupe une entree qui n'existe pas encore. Faux avec le motif.
+function PlanGroupJoin(AGroup: TLdapEntry; AServer: TProviderKind; out AJoin: TGroupJoin;
+  out AError: string): Boolean;
+// Une seule valeur ajoutee, rien de remplace. nil avec le motif: groupe par uid, entree sans uid.
+function GroupJoinChange(const AJoin: TGroupJoin; AEntry: TLdapEntry; out AError: string): TLdapChange;
+// Le DN est decode avant d'etre compare. AFold: casse par attribut, selon le schema; sans lui toute
+// valeur ignore la casse, faute de mieux.
+function DnIdentityKey(const ADn: string; AFold: TDnFoldProbe = nil; ACanon: TDnTypeCanon = nil): string;
 function GroupKindName(AKind: TGroupKind): string;
 function MembershipKindName(AKind: TMembershipKind): string;
 function MemberValue(const AModel: TGroupModel; const AMemberDn, AMemberUid: string): string;
 function LooksLikeDn(const S: string): Boolean;
 function PlanAddMember(AGroup: TLdapEntry; const AModel: TGroupModel;
-  const AMemberDn, AMemberUid: string; out AError: string): TLdapChange;
+  const AMemberDn, AMemberUid: string; out AError: string; AFold: TDnFoldProbe = nil; ACanon: TDnTypeCanon = nil): TLdapChange;
+// Plusieurs membres, une seule modification. AMemberUids ne sert qu'a memberUid.
+function PlanAddMembers(AGroup: TLdapEntry; const AModel: TGroupModel;
+  const AMemberDns, AMemberUids: array of string; out ASkipped: Integer;
+  out AError: string; AFold: TDnFoldProbe = nil; ACanon: TDnTypeCanon = nil): TLdapChange;
 function PlanRemoveMember(AGroup: TLdapEntry; const AModel: TGroupModel;
-  const AMemberDn, AMemberUid: string; out AError: string): TLdapChange;
+  const AMemberDn, AMemberUid: string; out AError: string; AFold: TDnFoldProbe = nil; ACanon: TDnTypeCanon = nil): TLdapChange;
 function DirectGroupsFilter(const ADn, AUid: string): string;
 function AdNestedGroupsFilter(const ADn: string): string;
 function AdPrimaryMembersFilter(const APrimaryGroupToken: string): string;
@@ -171,20 +193,26 @@ function DynamicCriteriaAttr(AEntry: TLdapEntry; AServer: TProviderKind): string
 implementation
 
 uses
-  uLdapFilter, uLdapDn;
+  Generics.Collections, uLdapFilter;
 
-function DnIdentityKey(const ADn: string): string;
+type
+  TFoldAll = class
+    class function Yes(const AType: string): TDnValueFold;
+  end;
+
+class function TFoldAll.Yes(const AType: string): TDnValueFold;
+begin
+  Result := dfCaseIgnore;
+end;
+
+function DnIdentityKey(const ADn: string; AFold: TDnFoldProbe; ACanon: TDnTypeCanon): string;
 var
   d: TLdapDn;
-  cmp: TDnComparer;
 begin
-  if not DnTryParse(AsciiLowerCase(ADn), d) then Exit('?' + AsciiLowerCase(Trim(ADn)));
-  cmp := TDnComparer.Create;
-  try
-    Result := DnStrictKey(cmp, d);
-  finally
-    cmp.Free;
-  end;
+  // Minuscules apres decodage, pas avant: "\41" n'est pas "\61" tant qu'on ne l'a pas lu.
+  if not DnTryParse(ADn, d) then Exit('?' + AsciiLowerCase(Trim(ADn)));
+  if not Assigned(AFold) then AFold := @TFoldAll.Yes;
+  Result := DnFoldKey(ADn, AFold, ACanon);
 end;
 
 function RdnOrDn(const ADn: string): string;
@@ -301,6 +329,54 @@ begin
   Result := (Pos('=', S) > 0) and DnTryParse(S, d) and (DnRdnCount(d) > 0);
 end;
 
+function PlanGroupJoin(AGroup: TLdapEntry; AServer: TProviderKind; out AJoin: TGroupJoin;
+  out AError: string): Boolean;
+var
+  model: TGroupModel;
+begin
+  Result := False;
+  AJoin := Default(TGroupJoin);
+  AError := '';
+  if AGroup = nil then
+  begin
+    AError := rsGroupNotGroup;
+    Exit;
+  end;
+  model := DetectGroupModel(AGroup, AServer);
+  if model.Kind = gkNotGroup then
+  begin
+    AError := rsGroupNotGroup;
+    Exit;
+  end;
+  if (model.Kind = gkDynamicUrl) or (model.MemberAttr = '') then
+  begin
+    AError := Format(rsGroupDynamic, [model.DynamicAttr]);
+    Exit;
+  end;
+  AJoin.GroupDn := AGroup.Dn;
+  AJoin.Attr := model.MemberAttr;
+  AJoin.ByDn := model.ValuesAreDns;
+  Result := True;
+end;
+
+function GroupJoinChange(const AJoin: TGroupJoin; AEntry: TLdapEntry; out AError: string): TLdapChange;
+var
+  value: RawByteString;
+begin
+  Result := nil;
+  AError := '';
+  if AEntry = nil then Exit;
+  if AJoin.ByDn then value := AEntry.Dn
+  else value := AEntry.FirstValue('uid');
+  if value = '' then
+  begin
+    AError := rsGroupNeedUid;
+    Exit;
+  end;
+  Result := NewChange(ckModify, AJoin.GroupDn);
+  Result.AddMod(moAdd, AJoin.Attr, [value]);
+end;
+
 function MemberValue(const AModel: TGroupModel; const AMemberDn, AMemberUid: string): string;
 begin
   if AModel.ValuesAreDns then
@@ -310,7 +386,7 @@ begin
 end;
 
 function FindMemberIndex(AAttr: TLdapAttribute; const AModel: TGroupModel;
-  const AValue: string): Integer;
+  const AValue: string; AFold: TDnFoldProbe; ACanon: TDnTypeCanon): Integer;
 var
   v, key: string;
   p, i: Integer;
@@ -323,14 +399,14 @@ begin
       if AAttr.Values[i] = AValue then Exit(i);
     Exit(-1);
   end;
-  key := DnIdentityKey(AValue);
+  key := DnIdentityKey(AValue, AFold, ACanon);
   for i := 0 to AAttr.ValueCount - 1 do
   begin
     v := AAttr.Values[i];
     p := Pos('#''', v);
     if (p > 0) and (Copy(v, Length(v) - 1, 2) = '''B') then
       v := Copy(v, 1, p - 1);
-    if DnIdentityKey(v) = key then Exit(i);
+    if DnIdentityKey(v, AFold, ACanon) = key then Exit(i);
   end;
   Result := -1;
 end;
@@ -353,7 +429,8 @@ begin
 end;
 
 function PlanAddMember(AGroup: TLdapEntry; const AModel: TGroupModel;
-  const AMemberDn, AMemberUid: string; out AError: string): TLdapChange;
+  const AMemberDn, AMemberUid: string; out AError: string; AFold: TDnFoldProbe;
+  ACanon: TDnTypeCanon): TLdapChange;
 var
   v: string;
 begin
@@ -372,7 +449,7 @@ begin
     AError := Format(rsGroupNotDn, [v]);
     Exit;
   end;
-  if FindMemberIndex(AGroup.Find(AModel.MemberAttr), AModel, v) >= 0 then
+  if FindMemberIndex(AGroup.Find(AModel.MemberAttr), AModel, v, AFold, ACanon) >= 0 then
   begin
     AError := rsGroupAlreadyMember;
     Exit;
@@ -382,8 +459,97 @@ begin
   Result.AddMod(moAdd, AModel.MemberAttr, [v]);
 end;
 
+type
+  TMemberKeySet = specialize TDictionary<string, Boolean>;
+
+// Meme lecture d'une valeur stockee que FindMemberIndex: le suffixe #'...'B de uniqueMember ne
+// fait pas partie du DN.
+function StoredMemberKey(const AModel: TGroupModel; const AValue: string;
+  AFold: TDnFoldProbe; ACanon: TDnTypeCanon): string;
+var
+  v: string;
+  p: Integer;
+begin
+  if not AModel.ValuesAreDns then Exit(AValue);
+  v := AValue;
+  p := Pos('#''', v);
+  if (p > 0) and (Copy(v, Length(v) - 1, 2) = '''B') then
+    v := Copy(v, 1, p - 1);
+  Result := DnIdentityKey(v, AFold, ACanon);
+end;
+
+function PlanAddMembers(AGroup: TLdapEntry; const AModel: TGroupModel;
+  const AMemberDns, AMemberUids: array of string; out ASkipped: Integer;
+  out AError: string; AFold: TDnFoldProbe; ACanon: TDnTypeCanon): TLdapChange;
+var
+  values: array of RawByteString;
+  seen: TMemberKeySet;
+  a: TLdapAttribute;
+  v, uid, key: string;
+  i, n: Integer;
+begin
+  Result := nil;
+  ASkipped := 0;
+  if not CheckWritable(AModel, AError) then Exit;
+  // Liste tronquee (plages AD non recollees, budget depasse): un membre hors de ce qui a ete lu
+  // passerait pour nouveau, et le serveur refuserait tout le lot.
+  a := AGroup.Find(AModel.MemberAttr);
+  if AGroup.DecodeIncomplete or ((a <> nil) and a.Truncated) then
+  begin
+    AError := rsGroupMembersPartial;
+    Exit;
+  end;
+  values := nil;
+  SetLength(values, Length(AMemberDns));
+  n := 0;
+  seen := TMemberKeySet.Create;
+  try
+    if a <> nil then
+      for i := 0 to a.ValueCount - 1 do
+        seen.AddOrSetValue(StoredMemberKey(AModel, a.Values[i], AFold, ACanon), True);
+    for i := 0 to High(AMemberDns) do
+    begin
+      uid := '';
+      if i <= High(AMemberUids) then uid := AMemberUids[i];
+      v := MemberValue(AModel, AMemberDns[i], uid);
+      if v = '' then
+      begin
+        AError := rsGroupNeedUid + ': ' + AMemberDns[i];
+        Exit;
+      end;
+      if AModel.ValuesAreDns and not LooksLikeDn(v) then
+      begin
+        AError := Format(rsGroupNotDn, [v]);
+        Exit;
+      end;
+      if AModel.ValuesAreDns then key := DnIdentityKey(v, AFold, ACanon) else key := v;
+      // Une valeur deja presente ferait refuser tout le lot: ecartee et comptee.
+      if seen.ContainsKey(key) then
+      begin
+        Inc(ASkipped);
+        Continue;
+      end;
+      seen.Add(key, True);
+      values[n] := RawByteString(v);
+      Inc(n);
+    end;
+  finally
+    seen.Free;
+  end;
+  SetLength(values, n);
+  if n = 0 then
+  begin
+    AError := rsGroupAllMembers;
+    Exit;
+  end;
+  // Ajout des seules nouvelles valeurs: les autres membres ne sont jamais reecrits.
+  Result := NewChange(ckModify, AGroup.Dn);
+  Result.AddMod(moAdd, AModel.MemberAttr, values);
+end;
+
 function PlanRemoveMember(AGroup: TLdapEntry; const AModel: TGroupModel;
-  const AMemberDn, AMemberUid: string; out AError: string): TLdapChange;
+  const AMemberDn, AMemberUid: string; out AError: string; AFold: TDnFoldProbe;
+  ACanon: TDnTypeCanon): TLdapChange;
 var
   a: TLdapAttribute;
   i: Integer;
@@ -393,7 +559,7 @@ begin
   if not CheckWritable(AModel, AError) then Exit;
   v := MemberValue(AModel, AMemberDn, AMemberUid);
   a := AGroup.Find(AModel.MemberAttr);
-  i := FindMemberIndex(a, AModel, v);
+  i := FindMemberIndex(a, AModel, v, AFold, ACanon);
   if i < 0 then
   begin
     AError := rsGroupNotMember;

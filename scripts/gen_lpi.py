@@ -28,6 +28,18 @@ UNIT_DIRS = ["src/util", "src/domain", "src/application", "src/ldap", "src/passw
 ROTTENUI_LPK = "rottenui/rottenui.lpk"
 
 
+def app_version():
+    # Une seule source: RT_VERSION. Le numero des ressources Windows ne derive plus en douce.
+    path = os.path.join(ROOT, "src", "util", "uVersion.pas")
+    for line in open(path, encoding="utf-8"):
+        line = line.strip()
+        if line.startswith("RT_VERSION"):
+            text = line.split("'")[1].split("-")[0]
+            parts = (text.split(".") + ["0"])[:2]
+            return int(parts[0]), int(parts[1])
+    sys.exit("RT_VERSION introuvable dans " + path)
+
+
 def resources():
     # les licences des fontes et des icones sont embarquees par RottenUI
     res = [("APPICON_PNG", "../resources/icons/rottentree-256.png")]
@@ -153,7 +165,10 @@ def main():
     out.append("    </General>")
     out.append('    <VersionInfo>')
     out.append('      <UseVersionInfo Value="True"/>')
-    out.append('      <MajorVersionNr Value="1"/>')
+    major, minor = app_version()
+    out.append('      <MajorVersionNr Value="%d"/>' % major)
+    if minor:
+        out.append('      <MinorVersionNr Value="%d"/>' % minor)
     out.append('      <StringTable CompanyName="Cyril LAMY" FileDescription="Rottentree LDAP client" '
                'LegalCopyright="GPL-3.0-or-later" ProductName="Rottentree"/>')
     out.append('    </VersionInfo>')

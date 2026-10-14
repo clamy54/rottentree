@@ -16,7 +16,8 @@ uses
 type
   TSubtreeProgressDialog = class(TRtProgressDialog)
   public
-    constructor CreateProgress(AOwner: TComponent; const ABaseDn, AServer, ABadge: string);
+    constructor CreateProgress(AOwner: TComponent; const ABaseDn, AServer, ABadge: string;
+      ABaseCount: Integer = 1);
     procedure UpdateFrom(ASubtree: TSubtreeDeletion);
     procedure Finish(const ASummary: string; AState: TUiState);
     function PhaseText: string;
@@ -25,6 +26,7 @@ type
 resourcestring
   rsSpTitle = 'Delete subtree';
   rsSpBase = 'Subtree: %s';
+  rsSpBases = '%d selected entries and their subtrees, from %s';
   rsSpEnumerating = 'Listing the entries of the subtree...';
   rsSpFound = '%d entries found so far.';
   rsSpAwaiting = 'Waiting for your confirmation: %d entries.';
@@ -41,9 +43,12 @@ resourcestring
 implementation
 
 constructor TSubtreeProgressDialog.CreateProgress(AOwner: TComponent; const ABaseDn, AServer,
-  ABadge: string);
+  ABadge: string; ABaseCount: Integer);
 begin
-  inherited CreateProgress(AOwner, rsSpTitle, Format(rsSpBase, [ABaseDn]));
+  if ABaseCount > 1 then
+    inherited CreateProgress(AOwner, rsSpTitle, Format(rsSpBases, [ABaseCount, ABaseDn]))
+  else
+    inherited CreateProgress(AOwner, rsSpTitle, Format(rsSpBase, [ABaseDn]));
   SetIcon('trash');
   SetTarget(AServer, ABadge);
   StatusText := rsSpEnumerating;

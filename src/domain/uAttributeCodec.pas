@@ -1028,7 +1028,8 @@ begin
           AddDetail(Result, Format(rsDetSidParts, [Byte(AValue[1]), SidAuthorityText(t),
             Byte(AValue[2])]));
           if Byte(AValue[2]) > 0 then
-            AddDetail(Result, Format(rsDetRid, [ReadUInt32LE(AValue, Length(AValue) - 3)]));
+            // Int64: un sous-identifiant de domaine depasse souvent 2^31, et %d le voudrait signe.
+            AddDetail(Result, Format(rsDetRid, [Int64(ReadUInt32LE(AValue, Length(AValue) - 3))]));
         end
         else
           MarkInvalid(Result, BinaryDisplay(AValue), Format(rsDiagSid, [err]));

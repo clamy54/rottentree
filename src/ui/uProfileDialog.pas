@@ -12,7 +12,7 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, StdCtrls, ExtCtrls, ComCtrls, Dialogs, LazUTF8,
   uUiKit, uConnectionProfile, uUiInbox, uDirectoryWorker, uProfileProbe, uRtCheck, uRtCombo, uRtList,
-  uRtSecretEdit;
+  uRtSecretEdit, uRtButton;
 
 resourcestring
   rsProfileTitle = 'Connection profile';
@@ -45,6 +45,7 @@ resourcestring
   rsAuthzHint = 'Optional. Empty: the client certificate''s identity. Otherwise dn:... or u:..., if the server allows it.';
   rsSecret = 'Password';
   rsSecretHint = 'Used for this dialog''s tests. Stored only if you choose to remember it.';
+  rsSecretReveal = 'Show or hide the password';
   rsRemember = 'Remember the password in the encrypted document';
   rsAllowPlain = 'Allow sending passwords without encryption for this profile';
   rsPlainWarning = 'This connection is not encrypted: identities, data and passwords can be read on the network.';
@@ -104,6 +105,7 @@ type
     FPages: TPageControl;
     FName, FDesc, FBadge, FHost, FPort, FBindDn, FAuthz: TEdit;
     FSecret: TRtSecretEdit;
+    FSecretEye: TRtFlatButton;
     FTransport, FAuthMode, FRevocation, FAliases, FFolder, FServerKind: TRtComboBox;
     FReadOnly, FAllowPlain, FRemember, FAppendBase, FShowConfig: TRtCheckBox;
     FBindPreview: TLabel;
@@ -139,6 +141,7 @@ type
     procedure UpdateBindPreview;
     function SimpleBindSelected: Boolean;
     procedure SettingChanged(Sender: TObject);
+    procedure SecretEyeClick(Sender: TObject);
     procedure VerifyCaClick(Sender: TObject);
     procedure ImportCaClick(Sender: TObject);
     procedure RemoveCaClick(Sender: TObject);
@@ -161,11 +164,14 @@ type
     function SelectedFolderUuid: string;
     function SecretText: RawByteString;
     function RememberSecret: Boolean;
+    // Mot de passe deja garde dans le document: montre masque, pour le voir ou tester avec.
+    procedure SetStoredSecret(const ASecret: RawByteString);
   end;
 
 function EditProfile(AOwner: TComponent; AProfile: TConnectionProfile;
   const AFolderNames, AFolderUuids: TStrings; var AFolderUuid: string;
-  out ASecret: RawByteString; out ARemember: Boolean): Boolean;
+  out ASecret: RawByteString; out ARemember: Boolean;
+  const AStoredSecret: RawByteString = ''): Boolean;
 
 implementation
 
@@ -174,12 +180,14 @@ uses
 
 function EditProfile(AOwner: TComponent; AProfile: TConnectionProfile;
   const AFolderNames, AFolderUuids: TStrings; var AFolderUuid: string;
-  out ASecret: RawByteString; out ARemember: Boolean): Boolean;
+  out ASecret: RawByteString; out ARemember: Boolean;
+  const AStoredSecret: RawByteString): Boolean;
 var
   d: TProfileDialog;
 begin
   d := TProfileDialog.CreateFor(AOwner, AProfile, AFolderNames, AFolderUuids, AFolderUuid);
   try
+    if AStoredSecret <> '' then d.SetStoredSecret(AStoredSecret);
     Result := d.ShowModal = mrOk;
     ASecret := '';
     ARemember := False;
@@ -291,6 +299,14 @@ begin
   FAuthzHint := MakeLabel(AParent, rsAuthzHint);
   FSecret := MakeSecretRow(AParent, rsSecret, 190);
   FSecret.OnChange := @SettingChanged;
+  FSecretEye := TRtFlatButton.Create(FSecret.Parent);
+  FSecretEye.Parent := TWinControl(FSecret.Parent);
+  FSecretEye.Align := alRight;
+  FSecretEye.BorderSpacing.Around := 2;
+  FSecretEye.Setup('eye', '');
+  FSecretEye.Hint := rsSecretReveal;
+  FSecretEye.ShowHint := True;
+  FSecretEye.OnClick := @SecretEyeClick;
   FSecretHint := MakeLabel(AParent, rsSecretHint);
   FRemember := MakeCheck(AParent, rsRemember);
   FAllowPlain := MakeCheck(AParent, rsAllowPlain);
@@ -824,6 +840,22 @@ end;
 function TProfileDialog.RememberSecret: Boolean;
 begin
   Result := FRemember.Checked and SimpleBindSelected;
+end;
+
+procedure TProfileDialog.SetStoredSecret(const ASecret: RawByteString);
+var
+  s: string;
+begin
+  s := ASecret;
+  UniqueString(s);
+  FSecret.SetSecret(s);
+  RtWipeSecret(s);
+end;
+
+procedure TProfileDialog.SecretEyeClick(Sender: TObject);
+begin
+  FSecret.Revealed := not FSecret.Revealed;
+  if FSecret.Revealed then FSecretEye.IconId := 'eye-off' else FSecretEye.IconId := 'eye';
 end;
 
 end.

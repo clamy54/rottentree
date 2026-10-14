@@ -138,6 +138,33 @@ controllers disagree about who someone is, and both are absolutely certain.
 
 ![Creating a computer account in Active Directory](screenshots/ad_assistant.png)
 
+**Templates.** Accounts created by hand are how a directory starts to rot:
+copy the last user, forget to change half of it, and five years later nobody
+knows why the intern has `uidNumber: 0`. A template describes a kind of
+entry once. Some values are asked, some are fixed, the rest are worked out.
+`uid` comes from the initial and the surname, lower case, accents stripped,
+because `hélène` will break a shell script written in 2009 by someone long
+gone and still running in cron. Free `uidNumber` values come from the
+directory, not from the spreadsheet everyone swears by and nobody updates.
+Homonyms get a number, the same one everywhere, so `jdupont2` never reads the
+mail of `jdupont1`. And when a Jean Dupont already exists, Rottentree says so
+and asks before creating anything: namesake or rehire? It cannot tell.
+Neither can HR. Only payroll has a clue: it paid the old Jean Dupont by
+mistake for three years after he left. The mistake was fixed in March. The
+rehire request came in April.
+
+![The template editor: values asked, fixed or composed from the others](screenshots/template_editor.png)
+
+Then fill a short form and look at the entry before it is written, like
+everything else here. Or feed it a CSV for the September intake: one line, one
+entry. The file is treated as hostile, because it came out of a spreadsheet.
+A formula, a hidden character or a shifted column puts that line aside with
+the reason, and the other 299 go through. Random passwords are shown once and
+kept nowhere. Write them down: the next time you see them should not be in a
+breach dump. Three hundred accounts in about a minute, groups included. The
+ticket said three days. Keep them: on a rotten day there is always something
+rottener than account creation waiting in the queue.
+
 **Comparison.** From 2 to 16 directories or LDIF files compared entry by entry,
 with the differences sorted, explained and exported as HTML, JSON or CSV.
 Sixteen replicas in perfect agreement is a beautiful sight, and you will see it

@@ -53,6 +53,7 @@ resourcestring
   rsMenuSearch = 'Search...';
   rsMenuDelete = 'Delete Entry...';
   rsMenuSchema = 'Schema Browser...';
+  rsMenuTemplates = 'Entry Templates...';
   rsMenuPassword = 'Password Tools...';
   rsMenuCompareNew = 'New Comparison...';
   rsMenuLdifEditor = 'LDIF Editor';

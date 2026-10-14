@@ -148,6 +148,7 @@ resourcestring
   rsSchemaExported = 'Plan exported to %s.';
   rsSchemaExportFailed = 'The plan was not exported: %s';
   rsSchemaDeleteConfirm = 'Plan the deletion of %s?';
+  rsSchemaGoneMeanwhile = '%s is no longer in the schema read again meanwhile: nothing to delete.';
   rsSchemaFieldOid = 'OID (from the arc your organization administers)';
   rsSchemaFieldNames = 'Names (space separated)';
   rsSchemaFieldDesc = 'Description';
@@ -960,6 +961,8 @@ var
   kind: TDefinitionKind;
   oid: string;
   s: TSchemaSnapshot;
+  at: TSchemaAttributeType;
+  oc: TSchemaObjectClass;
   def: TSchemaDefinition;
   src: TSchemaSource;
   plan: TSchemaChangePlan;
@@ -969,15 +972,28 @@ begin
   if (s = nil) or (oid = '') then Exit;
   if RtMessageDlg(rsSchemaTitle, Format(rsSchemaDeleteConfirm, [oid]), mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
     Exit;
+  // Relu apres la question: un rafraichissement arrive pendant qu'elle etait ouverte a libere l'ancien.
+  s := Schema;
+  at := nil;
+  oc := nil;
+  if s <> nil then
+  begin
+    if kind = dkAttribute then at := s.AttributeType(oid) else oc := s.ObjectClass(oid);
+  end;
+  if (at = nil) and (oc = nil) then
+  begin
+    RtMessageDlg(rsSchemaTitle, Format(rsSchemaGoneMeanwhile, [oid]), mtWarning, [mbOK], 0);
+    Exit;
+  end;
   // AD ne supprime pas une definition de schema: on la declare defunte (isDefunct).
   if FCaps.Adapter = sakActiveDirectory then
   begin
-    if kind = dkAttribute then AdDefunct(s.AttributeType(oid).PrimaryName, kind)
-    else AdDefunct(s.ObjectClass(oid).PrimaryName, kind);
+    if at <> nil then AdDefunct(at.PrimaryName, kind)
+    else AdDefunct(oc.PrimaryName, kind);
     Exit;
   end;
-  if kind = dkAttribute then def := TSchemaDefinition.Create(kind, s.AttributeType(oid).Raw)
-  else def := TSchemaDefinition.Create(kind, s.ObjectClass(oid).Raw);
+  if at <> nil then def := TSchemaDefinition.Create(kind, at.Raw)
+  else def := TSchemaDefinition.Create(kind, oc.Raw);
   try
     SourceOf(kind, oid, src);
     plan := BuildSchemaPlan(s, FCaps, soDelete, def, nil, src);

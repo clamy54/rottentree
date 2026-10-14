@@ -27,6 +27,8 @@ type
 
   TFbRow = class(TCustomControl)
   private
+    // Identite qui survit a l'adresse: une ligne neuve peut reprendre celle d'une ligne detruite.
+    FSerial: Int64;
     FDlg: TFilterBuilderDialog;
     FKind: TFbRowKind;
     FNode: TFilterNode;
@@ -298,8 +300,12 @@ const
 type
   TFbDeferred = class
     Row: TFbRow;
+    Serial: Int64;
     Action: TFbAction;
   end;
+
+var
+  GFbRowSerial: Int64 = 0;
 
 function FilterGroupColor(AKind: TFilterKind): TColor;
 var
@@ -385,6 +391,8 @@ constructor TFbRow.CreateRow(AOwner: TWinControl; ADlg: TFilterBuilderDialog; AK
   ANode, AGroup: TFilterNode; ANegated: Boolean; ADepth: Integer; const ARails: TFbColors);
 begin
   inherited Create(AOwner);
+  Inc(GFbRowSerial);
+  FSerial := GFbRowSerial;
   ControlStyle := ControlStyle + [csOpaque];
   FDlg := ADlg;
   FKind := AKind;
@@ -1907,6 +1915,7 @@ begin
   // Scier la branche, d'accord, mais pas assis dessus.
   d := TFbDeferred.Create;
   d.Row := ARow;
+  if ARow <> nil then d.Serial := ARow.FSerial;
   d.Action := AAction;
   FPending.Add(d);
   Application.QueueAsyncCall(@RunDeferred, PtrInt(d));
@@ -1917,15 +1926,18 @@ var
   d: TFbDeferred;
   row: TFbRow;
   act: TFbAction;
+  serial: Int64;
 begin
   d := TFbDeferred(AData);
   if FPending.IndexOf(d) < 0 then Exit;
   FPending.Remove(d);
   row := d.Row;
+  serial := d.Serial;
   act := d.Action;
   d.Free;
   if FClosing then Exit;
-  if (row <> nil) and (FRows.IndexOf(row) < 0) then Exit;
+  // Ligne disparue, ou remplacee par une autre a la meme adresse apres une reconstruction.
+  if (row <> nil) and ((FRows.IndexOf(row) < 0) or (row.FSerial <> serial)) then Exit;
   case act of
     faUndo: Undo;
     faAddInto, faAddGroupInto:

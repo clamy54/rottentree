@@ -128,13 +128,16 @@ const
 
   // Attributs geres par le serveur que tout schema ne declare pas operationnels:
   // AD, entre autres, les publie comme attributs utilisateur.
-  OPERATIONAL_ATTRS: array[0..27] of string = (
+  // sAMAccountType et primaryGroupID: AD les pose lui-meme a la creation et refuse qu'on s'en
+  // mele (0000209A, 00000529); une copie qui les reprend ne cree rien.
+  OPERATIONAL_ATTRS: array[0..29] of string = (
     'createtimestamp', 'modifytimestamp', 'creatorsname', 'modifiersname', 'entrycsn',
     'entrydn', 'subschemasubentry', 'hassubordinates', 'numsubordinates',
     'structuralobjectclass', 'contextcsn', 'whencreated', 'whenchanged', 'usncreated',
     'usnchanged', 'instancetype', 'distinguishedname', 'name', 'iscriticalsystemobject',
     'systemflags', 'dscorepropagationdata', 'replpropertymetadata', 'objectcategory',
-    'msds-approx-immed-subordinates', 'revision', 'nsparentuniqueid', 'entryid', 'parentid');
+    'msds-approx-immed-subordinates', 'revision', 'nsparentuniqueid', 'entryid', 'parentid',
+    'samaccounttype', 'primarygroupid');
 
   STATE_ATTRS: array[0..22] of string = (
     'pwdlastset', 'lastlogon', 'lastlogontimestamp', 'lastlogoff', 'logoncount',

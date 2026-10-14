@@ -396,6 +396,7 @@ var
   model: TGroupModel;
   dn, uid, err: string;
   change: TLdapChange;
+  rules: TDnCaseRules;
 begin
   if not RootUsable or Working then Exit;
   if ViewsGroupsOfEntry then
@@ -423,7 +424,12 @@ begin
       Exit;
     uid := Trim(uid);
   end;
-  change := PlanAddMember(FRoot, model, dn, uid, err);
+  rules := TDnCaseRules.Create(Conn);
+  try
+    change := PlanAddMember(FRoot, model, dn, uid, err, @rules.Folds, @rules.Canon);
+  finally
+    rules.Free;
+  end;
   if change = nil then
   begin
     SetStatus(err, usWarning);
@@ -441,6 +447,7 @@ var
   model: TGroupModel;
   change: TLdapChange;
   err, v: string;
+  rules: TDnCaseRules;
 begin
   i := SelectedNode;
   if not RootUsable or Working then Exit;
@@ -464,10 +471,15 @@ begin
   end;
   model := DetectGroupModel(FRoot, FServer);
   v := FExplorer.Graph[i].Dn;
-  if model.ValuesAreDns then
-    change := PlanRemoveMember(FRoot, model, v, '', err)
-  else
-    change := PlanRemoveMember(FRoot, model, '', v, err);
+  rules := TDnCaseRules.Create(Conn);
+  try
+    if model.ValuesAreDns then
+      change := PlanRemoveMember(FRoot, model, v, '', err, @rules.Folds, @rules.Canon)
+    else
+      change := PlanRemoveMember(FRoot, model, '', v, err, @rules.Folds, @rules.Canon);
+  finally
+    rules.Free;
+  end;
   if change = nil then
   begin
     SetStatus(err, usWarning);
@@ -518,6 +530,7 @@ var
   model: TGroupModel;
   change: TLdapChange;
   err, uid: string;
+  rules: TDnCaseRules;
 begin
   if AMsg.Entry = nil then
   begin
@@ -532,10 +545,15 @@ begin
   end;
   uid := '';
   if FRoot <> nil then uid := string(FRoot.FirstValue('uid', ''));
-  if FGroupAction = gaAddTo then
-    change := PlanAddMember(AMsg.Entry, model, FDn, uid, err)
-  else
-    change := PlanRemoveMember(AMsg.Entry, model, FDn, uid, err);
+  rules := TDnCaseRules.Create(Conn);
+  try
+    if FGroupAction = gaAddTo then
+      change := PlanAddMember(AMsg.Entry, model, FDn, uid, err, @rules.Folds, @rules.Canon)
+    else
+      change := PlanRemoveMember(AMsg.Entry, model, FDn, uid, err, @rules.Folds, @rules.Canon);
+  finally
+    rules.Free;
+  end;
   if change = nil then
   begin
     SetStatus(err, usWarning);

@@ -40,6 +40,10 @@ type
   TDnValueMatcher = function(const AType: string; const A, B: RawByteString): TDnMatch
     of object;
   TDnTypeCanon = function(const AType: string): string of object;
+  // Ce que la regle d'egalite d'un attribut fait des valeurs: tout compte, les espaces de bord et
+  // les doublons d'espaces ne comptent pas (caseExactMatch), ni la casse (caseIgnoreMatch).
+  TDnValueFold = (dfExact, dfCaseExact, dfCaseIgnore);
+  TDnFoldProbe = function(const AType: string): TDnValueFold of object;
 
   TDnParseMode = (
     dpmStrict,
@@ -88,13 +92,23 @@ function DnReplaceSuffix(AComparer: TDnComparer; const ADn, AOld, ANew: TLdapDn;
 
 function DnStrictKey(AComparer: TDnComparer; const ADn: TLdapDn): string;
 
+// Garde les DN qui ne sont sous aucun autre, dans l'ordre. Sans AFold, comparaison a l'octet:
+// mieux vaut ne pas elaguer que confondre.
+function DnOutermost(const ADns: array of string; AFold: TDnFoldProbe = nil;
+  ACanon: TDnTypeCanon = nil): TStringArray;
+// Cle d'identite d'un DN: decode, puis regle d'egalite de chaque attribut (AFold), types ramenes
+// a leur nom (ACanon). "cn=\41" et "cn=a" ont la meme si cn ignore la casse.
+function DnFoldKey(const ADn: string; AFold: TDnFoldProbe = nil; ACanon: TDnTypeCanon = nil): string;
+// Espaces de bord retires, suites d'espaces reduites a une seule (RFC 4518).
+function SqueezeSpaces(const S: RawByteString): RawByteString;
+
 function IsNumericOid(const S: string): Boolean;
 function IsDescr(const S: string): Boolean;
 
 implementation
 
 uses
-  uRtBytes;
+  Generics.Collections, uRtBytes;
 
 function IsAlpha(C: Char): Boolean; inline;
 begin
@@ -718,6 +732,157 @@ begin
     if i > 0 then Result := Result + ',';
     Result := Result + rdnKey;
   end;
+end;
+
+// Cle d'un RDN, AVA tries. Une valeur BER (#04...) garde ses octets: 0x41 et 0x61 n'y sont pas
+// la meme lettre.
+function SqueezeSpaces(const S: RawByteString): RawByteString;
+var
+  i, n: Integer;
+  last: Boolean;
+begin
+  Result := '';
+  SetLength(Result, Length(S));
+  n := 0;
+  last := True;
+  for i := 1 to Length(S) do
+    if S[i] = ' ' then
+    begin
+      if not last then
+      begin
+        Inc(n);
+        Result[n] := ' ';
+      end;
+      last := True;
+    end
+    else
+    begin
+      Inc(n);
+      Result[n] := S[i];
+      last := False;
+    end;
+  if (n > 0) and (Result[n] = ' ') then Dec(n);
+  SetLength(Result, n);
+end;
+
+function RdnFoldKey(const ARdn: TDnRdn; AFold: TDnFoldProbe; ACanon: TDnTypeCanon): string;
+var
+  parts: array of string;
+  tmp, t: string;
+  j, k: Integer;
+  fold: TDnValueFold;
+begin
+  parts := nil;
+  SetLength(parts, Length(ARdn.Avas));
+  for j := 0 to High(ARdn.Avas) do
+    with ARdn.Avas[j] do
+    begin
+      t := '';
+      if Assigned(ACanon) then t := ACanon(AttrType);
+      if t = '' then t := AsciiLower(AttrType);
+      parts[j] := t + '=';
+      fold := dfExact;
+      if Assigned(AFold) then fold := AFold(AttrType);
+      if HexForm then
+        parts[j] := parts[j] + '#' + HexEncode(Value)
+      else
+        case fold of
+          dfCaseIgnore: parts[j] := parts[j] + HexEncode(SqueezeSpaces(LowerCase(Value)));
+          dfCaseExact: parts[j] := parts[j] + HexEncode(SqueezeSpaces(Value));
+        else
+          parts[j] := parts[j] + HexEncode(Value);
+        end;
+    end;
+  for j := 1 to High(parts) do
+  begin
+    tmp := parts[j];
+    k := j - 1;
+    while (k >= 0) and (parts[k] > tmp) do
+    begin
+      parts[k + 1] := parts[k];
+      Dec(k);
+    end;
+    parts[k + 1] := tmp;
+  end;
+  Result := '';
+  for j := 0 to High(parts) do
+  begin
+    if j > 0 then Result := Result + '+';
+    Result := Result + parts[j];
+  end;
+end;
+
+type
+  TDnKeySet = specialize TDictionary<string, Boolean>;
+
+function DnFoldKey(const ADn: string; AFold: TDnFoldProbe; ACanon: TDnTypeCanon): string;
+var
+  d: TLdapDn;
+  k: Integer;
+begin
+  if not DnTryParse(ADn, d) then Exit(#1 + ADn);
+  Result := '';
+  for k := High(d.Rdns) downto 0 do
+    Result := RdnFoldKey(d.Rdns[k], AFold, ACanon) + ',' + Result;
+end;
+
+function DnOutermost(const ADns: array of string; AFold: TDnFoldProbe;
+  ACanon: TDnTypeCanon): TStringArray;
+var
+  // keys[i][k]: cle du DN reduit a ses RDN k..fin. [0] est le DN lui-meme, les suivants ses ancetres.
+  keys: array of TStringArray;
+  // Hachage et non liste triee: une insertion triee decale le tableau, quadratique sur des DN
+  // freres en ordre decroissant.
+  all, kept: TDnKeySet;
+  d: TLdapDn;
+  i, k, m, n: Integer;
+  covered: Boolean;
+begin
+  Result := nil;
+  SetLength(Result, Length(ADns));
+  keys := nil;
+  SetLength(keys, Length(ADns));
+  n := 0;
+  all := TDnKeySet.Create;
+  kept := TDnKeySet.Create;
+  try
+    for i := 0 to High(ADns) do
+    begin
+      if DnTryParse(ADns[i], d) then
+      begin
+        m := Length(d.Rdns);
+        SetLength(keys[i], m + 1);
+        keys[i][m] := '';
+        for k := m - 1 downto 0 do
+          keys[i][k] := RdnFoldKey(d.Rdns[k], AFold, ACanon) + ',' + keys[i][k + 1];
+      end
+      else
+      begin
+        // Illisible: ne peut etre qu'un doublon exact, jamais parent ni enfant.
+        SetLength(keys[i], 1);
+        keys[i][0] := #1 + ADns[i];
+      end;
+      all.AddOrSetValue(keys[i][0], True);
+    end;
+    for i := 0 to High(ADns) do
+    begin
+      covered := kept.ContainsKey(keys[i][0]);
+      k := 1;
+      while (not covered) and (k <= High(keys[i])) do
+      begin
+        covered := all.ContainsKey(keys[i][k]);
+        Inc(k);
+      end;
+      if covered then Continue;
+      kept.Add(keys[i][0], True);
+      Result[n] := ADns[i];
+      Inc(n);
+    end;
+  finally
+    all.Free;
+    kept.Free;
+  end;
+  SetLength(Result, n);
 end;
 
 initialization

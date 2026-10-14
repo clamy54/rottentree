@@ -356,19 +356,19 @@ begin
   begin
     if pre3 = '$6$' then
       Grp(10, 'crypt-sha512', '{CRYPT} SHA-512-crypt ($6$)',
-        'hashcat -m 1800   john: detection auto', True)
+        'hashcat -m 1800 --username   john: detection auto', True)
     else if pre3 = '$5$' then
       Grp(11, 'crypt-sha256', '{CRYPT} SHA-256-crypt ($5$)',
-        'hashcat -m 7400   john: detection auto', True)
+        'hashcat -m 7400 --username   john: detection auto', True)
     else if (pre3 = '$2a') or (pre3 = '$2b') or (pre3 = '$2y') or (pre3 = '$2x') then
       Grp(12, 'crypt-bcrypt', '{CRYPT} bcrypt ($2)',
-        'hashcat -m 3200   john: detection auto', True)
+        'hashcat -m 3200 --username   john: detection auto', True)
     else if pre3 = '$1$' then
       Grp(13, 'crypt-md5', '{CRYPT} MD5-crypt ($1$)',
-        'hashcat -m 500   john: detection auto', True)
+        'hashcat -m 500 --username   john: detection auto', True)
     else if Length(rest) = 13 then
       Grp(14, 'crypt-des', '{CRYPT} DES (traditionnel)',
-        'hashcat -m 1500   john: detection auto', True)
+        'hashcat -m 1500 --username   john: detection auto', True)
     else if (Length(rest) > 0) and (rest[1] = '_') then
       Grp(15, 'crypt-bsdi', '{CRYPT} BSDi extended DES',
         'john: detection auto   hashcat: non pris en charge', True)
@@ -380,19 +380,19 @@ begin
 
   if scheme = 'SSHA' then
     Grp(20, 'ssha1', '{SSHA} salted SHA-1 (base64)',
-      'hashcat -m 111   john: detection auto', False)
+      'hashcat -m 111 --username   john: detection auto', False)
   else if scheme = 'SHA' then
     Grp(21, 'sha1', '{SHA} SHA-1 (base64)',
-      'hashcat -m 101   john: detection auto', False)
+      'hashcat -m 101 --username   john: detection auto', False)
   else if scheme = 'SSHA256' then
     Grp(22, 'ssha256', '{SSHA256} salted SHA-256 (base64)',
-      'hashcat -m 1411   john: detection auto', False)
+      'hashcat -m 1411 --username   john: detection auto', False)
   else if scheme = 'SSHA512' then
     Grp(23, 'ssha512', '{SSHA512} salted SHA-512 (base64)',
-      'hashcat -m 1711   john: detection auto', False)
+      'hashcat -m 1711 --username   john: detection auto', False)
   else if scheme = 'ARGON2' then
     Grp(30, 'argon2', '{ARGON2} (chaine PHC $argon2...)',
-      'hashcat -m 34000 (selon la version)   john: detection auto', True)
+      'hashcat -m 34000 --username (selon la version)   john: detection auto', True)
   else if scheme <> '' then
     // Hachage reconnu mais mode outil pas certain ici: on exporte, prefixe garde, note neutre.
     Grp(40, 'ldap-' + LowerCase(scheme), '{' + scheme + '}',

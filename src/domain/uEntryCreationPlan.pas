@@ -24,6 +24,7 @@ const
   CREATE_UF_ACCOUNTDISABLE = $2;
   CREATE_UF_NORMAL_ACCOUNT = $200;
   CREATE_UF_WORKSTATION_TRUST_ACCOUNT = $1000;
+  AD_UF_DONT_EXPIRE_PASSWD = $10000;
 
 type
   TReqKind = (rqMust, rqMay);
@@ -74,7 +75,7 @@ type
   end;
   TRdnAvas = array of TRdnAva;
 
-  TCreationStepKind = (cskAdd, cskSetPassword, cskEnable);
+  TCreationStepKind = (cskAdd, cskSetPassword, cskEnable, cskJoinGroup);
 
   TStepOutcome = (
     sotPending,
@@ -113,6 +114,11 @@ type
     // Secrets admis seulement s'ils sortent des outils de mot de passe. Un
     // userPassword tape en clair dans une grille finit toujours dans un LDIF.
     ComputedSecrets: array of string;
+    // AD: mot de passe et options dans l'ajout. Refuse, rien n'est cree: pas d'orphelin desactive.
+    AdPasswordInAdd: Boolean;
+    AdMustChange, AdNeverExpires, AdDisabled: Boolean;
+    // options d'un modele: elles font foi sur les bits fournis, dans un sens comme dans l'autre
+    AdAccountOptions: Boolean;
     constructor Create;
     destructor Destroy; override;
     property Values: TLdapEntry read FValues;
@@ -162,7 +168,10 @@ resourcestring
   rsCpOverride = '%s is normally set by the server; the supplied value replaces it.';
   rsCpSecret = '%s is a secret: set it with the password tools (double click its value), never by typing it.';
   rsCpSecretAd = '%s: on Active Directory the password is set after the creation, as a separate step.';
+  rsCpAdOnAdd = '%s is set by Active Directory itself when the entry is created, which refuses it in the ' +
+    'request: leave it out.';
   rsCpDisabled = 'The account is created disabled; enable it as a separate step once its password is set.';
+  rsCpDisabledByChoice = 'The account is created disabled, as the template asks.';
   rsCpUacForcedDisabled = 'userAccountControl keeps the supplied bits but the account is created disabled.';
   rsCpUacInvalid = 'userAccountControl is not an integer.';
 
@@ -176,10 +185,15 @@ function InheritanceChainEx(ASchema: TSchemaSnapshot; const AClass: string; out 
   out AIssue: string; out AUnresolved: Boolean): Boolean;
 function IsPrecluded(const AAnalysis: TClassAnalysis; ASchema: TSchemaSnapshot;
   const AAttr: string): Boolean;
+// Rang de l'exigence qui couvre l'attribut, alias et OID compris. -1: aucune classe ne l'admet.
+function FindRequirement(const AAnalysis: TClassAnalysis; ASchema: TSchemaSnapshot;
+  const AAttr: string): Integer;
 function AnalyzeClasses(ASchema: TSchemaSnapshot; const AStructural, AAuxiliaries: array of string;
   AProvider: TProviderKind): TClassAnalysis;
 function IsServerGeneratedOnCreate(AProvider: TProviderKind; const AAttr: string;
   out ARule: string): Boolean;
+// AD refuse ces attributs dans un ajout (SAM les pose): sAMAccountType, primaryGroupID.
+function AdRefusesOnAdd(AProvider: TProviderKind; const AAttr: string): Boolean;
 function DefaultRdnAttribute(const AAnalysis: TClassAnalysis): string;
 function IsAdAccount(const AAnalysis: TClassAnalysis; AProvider: TProviderKind): Boolean;
 // DN produit par le serialiseur, jamais par concatenation: une virgule dans un nom
@@ -495,6 +509,16 @@ begin
     visited.Free;
   end;
   Result := ok;
+end;
+
+function AdRefusesOnAdd(AProvider: TProviderKind; const AAttr: string): Boolean;
+var
+  b: string;
+begin
+  b := AttrBaseName(AAttr);
+  Result := (AProvider = pkActiveDirectory) and (SameText(b, 'sAMAccountType') or
+    SameText(b, 'primaryGroupID') or SameText(b, '1.2.840.113556.1.4.302') or
+    SameText(b, '1.2.840.113556.1.4.98'));
 end;
 
 function IsServerGeneratedOnCreate(AProvider: TProviderKind; const AAttr: string;
@@ -982,8 +1006,12 @@ begin
   begin
     req := AAnalysis.Requirements[i];
     if req.Kind <> rqMust then Continue;
-    found := APlan.Values.Find(req.Name) <> nil;
-    if found then found := APlan.Values.Find(req.Name).ValueCount > 0;
+    // Par type resolu, pas par libelle: "1.3.6.1.1.1.1.0" vaut uidNumber.
+    found := False;
+    for k := 0 to APlan.Values.AttrCount - 1 do
+      if (APlan.Values.Attrs[k].ValueCount > 0) and
+         (FindRequirement(AAnalysis, ASchema, APlan.Values.Attrs[k].Description) = i) then
+        found := True;
     for k := 0 to High(APlan.Rdn) do
       if FindRequirement(AAnalysis, ASchema, APlan.Rdn[k].Attr) = i then found := True;
     case req.Supply of
@@ -1003,7 +1031,8 @@ begin
     // unicodePwd est une etape a part apres la creation.
     if IsSecret(ASensitive, a.Description) then
     begin
-      if APlan.Provider = pkActiveDirectory then
+      if (APlan.Provider = pkActiveDirectory) and not (APlan.AdPasswordInAdd and
+         SameName(a.BaseName, 'unicodePwd') and InArray('unicodePwd', APlan.ComputedSecrets)) then
       begin
         AddIssue(Result, isError, a.Description, Format(rsCpSecretAd, [a.Description]));
         Continue;
@@ -1013,6 +1042,11 @@ begin
         AddIssue(Result, isError, a.Description, Format(rsCpSecret, [a.Description]));
         Continue;
       end;
+    end;
+    if AdRefusesOnAdd(APlan.Provider, a.Description) then
+    begin
+      AddIssue(Result, isError, a.Description, Format(rsCpAdOnAdd, [a.Description]));
+      Continue;
     end;
     ri := FindRequirement(AAnalysis, ASchema, a.Description);
     if IsPrecluded(AAnalysis, ASchema, a.Description) then
@@ -1047,10 +1081,11 @@ begin
     begin
       if not TryStrToInt64(string(a.Values[0]), uac) then
         AddIssue(Result, isError, 'userAccountControl', rsCpUacInvalid)
-      else if (uac and CREATE_UF_ACCOUNTDISABLE) = 0 then
+      else if ((uac and CREATE_UF_ACCOUNTDISABLE) = 0) and not APlan.AdPasswordInAdd then
         AddIssue(Result, isWarning, 'userAccountControl', rsCpUacForcedDisabled);
     end;
-    AddIssue(Result, isWarning, '', rsCpDisabled);
+    if not APlan.AdPasswordInAdd then AddIssue(Result, isWarning, '', rsCpDisabled)
+    else if APlan.AdDisabled then AddIssue(Result, isWarning, '', rsCpDisabledByChoice);
   end;
 end;
 
@@ -1086,17 +1121,23 @@ begin
   end;
   if IsAdAccount(AAnalysis, APlan.Provider) then
   begin
-    // Desactive a la creation, les autres bits fournis restent: on ne touche pas aux
-    // drapeaux qu'on n'a pas compris.
+    // Les autres bits fournis restent: on ne touche pas aux drapeaux qu'on n'a pas compris.
     a := Result.Find('userAccountControl');
-    if (a <> nil) and (a.ValueCount > 0) and TryStrToInt64(string(a.Values[0]), uac) then
-      a.SetValues([RawByteString(IntToStr(uac or CREATE_UF_ACCOUNTDISABLE))])
-    else if InArray('computer', AAnalysis.ObjectClasses) then
-      Result.Ensure('userAccountControl').SetValues(
-        [RawByteString(IntToStr(CREATE_UF_WORKSTATION_TRUST_ACCOUNT or CREATE_UF_ACCOUNTDISABLE))])
+    if not ((a <> nil) and (a.ValueCount > 0) and TryStrToInt64(string(a.Values[0]), uac)) then
+    begin
+      if InArray('computer', AAnalysis.ObjectClasses) then uac := CREATE_UF_WORKSTATION_TRUST_ACCOUNT
+      else uac := CREATE_UF_NORMAL_ACCOUNT;
+    end;
+    if APlan.AdNeverExpires then uac := uac or AD_UF_DONT_EXPIRE_PASSWD
+    else if APlan.AdAccountOptions then uac := uac and not Int64(AD_UF_DONT_EXPIRE_PASSWD);
+    // Sans mot de passe dans l'ajout, desactive jusqu'a son etape; avec, actif sauf demande contraire.
+    if not APlan.AdPasswordInAdd or APlan.AdDisabled then
+      uac := uac or CREATE_UF_ACCOUNTDISABLE
     else
-      Result.Ensure('userAccountControl').SetValues(
-        [RawByteString(IntToStr(CREATE_UF_NORMAL_ACCOUNT or CREATE_UF_ACCOUNTDISABLE))]);
+      uac := uac and not Int64(CREATE_UF_ACCOUNTDISABLE);
+    Result.Ensure('userAccountControl').SetValues([RawByteString(IntToStr(uac))]);
+    if APlan.AdPasswordInAdd and APlan.AdMustChange then
+      Result.Ensure('pwdLastSet').SetValues(['0']);
   end;
 end;
 
@@ -1112,7 +1153,7 @@ procedure PrepareSteps(APlan: TEntryCreationPlan; const AAnalysis: TClassAnalysi
 begin
   APlan.Steps := nil;
   Add(cskAdd);
-  if IsAdAccount(AAnalysis, APlan.Provider) then
+  if IsAdAccount(AAnalysis, APlan.Provider) and not APlan.AdPasswordInAdd then
   begin
     Add(cskSetPassword);
     Add(cskEnable);

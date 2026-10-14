@@ -7,13 +7,13 @@ unit uSubtreeDeletion;
 // Suppression d'un sous-arbre: enumeration complete, previsualisation, nouvelle enumeration juste
 // avant d'executer, puis suppressions une a une des feuilles vers la racine. Pas de controle de
 // suppression recursive: on veut savoir ce qui part. Perimetre partiel ou change entre-temps: rien
-// n'est supprime.
+// n'est supprime. Plusieurs bases (selection multiple) donnent un seul perimetre, un seul apercu.
 
 interface
 
 uses
   SysUtils, Classes, uSearchModel, uChangeSet, uLdapErrors, uLdapEntry, uUiInbox,
-  uDirectoryWorker, uDirectoryOps;
+  uDirectoryWorker, uDirectoryOps, uLdapDn;
 
 const
   SUBTREE_MAX_ENTRIES = 200000;
@@ -42,6 +42,8 @@ type
     FPageSize: Integer;
     FState: TSubtreeState;
     FBaseDn: string;
+    FBases: TStringList;
+    FBaseIndex: Integer;
     FTask: Int64;
     FFound: TStringList;
     FTargets: TStringList;
@@ -64,6 +66,7 @@ type
     FMaxTargets: Integer;
     FMaxBytes: Int64;
     function StartEnumeration: Boolean;
+    function StartPass: Boolean;
     function GetFound: Integer;
     function GetRemaining: Integer;
     function SubmitNext: TSubtreeOutcome;
@@ -72,6 +75,9 @@ type
     constructor Create(AOps: TDirectoryOps; APageSize: Integer);
     destructor Destroy; override;
     function Start(const ABaseDn: string; AAssertionControl: Boolean = False): Boolean;
+    // AFold: casse des valeurs de DN pour retirer les bases deja couvertes par une autre.
+    function StartMany(const ABaseDns: array of string; AAssertionControl: Boolean = False;
+      AFold: TDnFoldProbe = nil; ACanon: TDnTypeCanon = nil): Boolean;
     function HandleEntries(AMsg: TEntriesMsg): TSubtreeOutcome;
     function HandleWrite(AMsg: TWriteMsg): TSubtreeOutcome;
     function Confirm: TSubtreeOutcome;
@@ -82,6 +88,7 @@ type
     function Active: Boolean;
     property State: TSubtreeState read FState;
     property BaseDn: string read FBaseDn;
+    property Bases: TStringList read FBases;
     property Targets: TStringList read FTargets;
     property Found: Integer read GetFound;
     property Remaining: Integer read GetRemaining;
@@ -107,13 +114,14 @@ procedure SortLeavesFirst(AList: TStringList);
 implementation
 
 uses
-  uLdapDn, uDirectoryService;
+  uDirectoryService;
 
 resourcestring
   rsSubtreeIncomplete = 'the subtree could not be enumerated completely';
   rsSubtreeReadOnly = 'this profile is read-only';
   rsSubtreeStoppedByUser = 'stopped at your request';
   rsSubtreeBudget = 'the subtree exceeds the collection limit (%d entries): nothing was deleted';
+  rsSubtreeNothing = 'nothing to delete';
 
 function DnDepthCompare(List: TStringList; Index1, Index2: Integer): Integer;
 var
@@ -133,12 +141,22 @@ begin
   AList.CustomSort(@DnDepthCompare);
 end;
 
+// Ceinture et bretelles: un DN supprime deux fois, la seconde tentative arreterait tout.
+procedure DropRepeats(AList: TStringList);
+var
+  i: Integer;
+begin
+  for i := AList.Count - 1 downto 1 do
+    if AList[i] = AList[i - 1] then AList.Delete(i);
+end;
+
 constructor TSubtreeDeletion.Create(AOps: TDirectoryOps; APageSize: Integer);
 begin
   inherited Create;
   FOps := AOps;
   FPageSize := APageSize;
   FFound := TStringList.Create;
+  FBases := TStringList.Create;
   FTargets := TStringList.Create;
   FQueue := TStringList.Create;
   FAssertPool := TStringList.Create;
@@ -150,6 +168,7 @@ end;
 destructor TSubtreeDeletion.Destroy;
 begin
   FFound.Free;
+  FBases.Free;
   FTargets.Free;
   FQueue.Free;
   FAssertPool.Free;
@@ -160,10 +179,9 @@ function TSubtreeDeletion.StartEnumeration: Boolean;
 var
   req: TSearchRequest;
 begin
-  FFound.Clear;
   // Sans limite: une enumeration tronquee ne passe jamais pour complete.
   req := DefaultSearchRequest;
-  req.BaseDn := FBaseDn;
+  req.BaseDn := FBases[FBaseIndex];
   req.Scope := ssSubtree;
   req.Filter := '(objectClass=*)';
   if (FState = sdsVerifying) and FAssertionControl then
@@ -177,10 +195,31 @@ begin
   Result := FTask <> 0;
 end;
 
+function TSubtreeDeletion.StartPass: Boolean;
+begin
+  FFound.Clear;
+  FBaseIndex := 0;
+  Result := StartEnumeration;
+end;
+
 function TSubtreeDeletion.Start(const ABaseDn: string; AAssertionControl: Boolean): Boolean;
 begin
+  Result := StartMany([ABaseDn], AAssertionControl);
+end;
+
+function TSubtreeDeletion.StartMany(const ABaseDns: array of string;
+  AAssertionControl: Boolean; AFold: TDnFoldProbe; ACanon: TDnTypeCanon): Boolean;
+var
+  kept: TStringArray;
+  i: Integer;
+begin
   Cancel;
-  FBaseDn := ABaseDn;
+  FBases.Clear;
+  kept := DnOutermost(ABaseDns, AFold, ACanon);
+  for i := 0 to High(kept) do
+    FBases.Add(kept[i]);
+  FBaseDn := '';
+  if FBases.Count > 0 then FBaseDn := FBases[0];
   FAssertionControl := AAssertionControl;
   FUnprotected := 0;
   FDeleted := 0;
@@ -202,8 +241,14 @@ begin
     FState := sdsStopped;
     Exit(False);
   end;
+  if FBases.Count = 0 then
+  begin
+    FLastError := MakeError(lecOther, 0, 'delete', rsSubtreeNothing);
+    FState := sdsStopped;
+    Exit(False);
+  end;
   FState := sdsEnumerating;
-  Result := StartEnumeration;
+  Result := StartPass;
   if not Result then FState := sdsStopped;
 end;
 
@@ -280,7 +325,15 @@ begin
     FState := sdsStopped;
     Exit(sdoIncomplete);
   end;
+  if FBaseIndex < FBases.Count - 1 then
+  begin
+    Inc(FBaseIndex);
+    if not StartEnumeration then
+      Exit(Stop(FLastError));
+    Exit(sdoPending);
+  end;
   SortLeavesFirst(FFound);
+  DropRepeats(FFound);
   if FState = sdsEnumerating then
   begin
     FTargets.Assign(FFound);
@@ -328,7 +381,7 @@ function TSubtreeDeletion.Confirm: TSubtreeOutcome;
 begin
   if FState <> sdsAwaitingConfirm then Exit(sdoNotMine);
   FState := sdsVerifying;
-  if not StartEnumeration then
+  if not StartPass then
     Exit(Stop(FLastError));
   Result := sdoPending;
 end;

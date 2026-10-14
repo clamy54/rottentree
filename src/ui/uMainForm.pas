@@ -150,6 +150,7 @@ type
     procedure PasswordToolClick(Sender: TObject);
     procedure CertificateClick(Sender: TObject);
     procedure SchemaClick(Sender: TObject);
+    procedure TemplatesClick(Sender: TObject);
     procedure EscapeToolClick(Sender: TObject);
     procedure ExportProfilesClick(Sender: TObject);
     procedure ImportProfilesClick(Sender: TObject);
@@ -181,7 +182,7 @@ implementation
 uses
   uTheme, uThemeLoad, uUiKit, uIcons, uPreferences, uDocDialogs, uProfileDialog,
   uDocumentCrypto, uSessionModel, uLdapErrors, uVersion, uCancel,
-  uSearchTab, uLdifTab, uPasswordDialog, uCertDialog, uSchemaDialog, uToolsDialogs,
+  uSearchTab, uLdifTab, uPasswordDialog, uCertDialog, uSchemaDialog, uToolsDialogs, uTemplateManager,
   uAboutDialog, uCompareTab, uRtBytes, uExportActions, uLdifExportDialog, uPasswordWork, uConnectFlow, uEntryTab,
   uDirectoryService, uMonitorTab, uPasswordAuditTab, uDuplicateIdTab, uHomonymTab,
   uAdToolsDialog,
@@ -403,6 +404,7 @@ begin
   AddItem(m, rsMenuDelete, 0, @DeleteEntryClick);
   Sep(m);
   AddItem(m, rsMenuSchema, 0, @SchemaClick);
+  AddItem(m, rsMenuTemplates, 0, @TemplatesClick);
   FMiLdifSchemaFiles := AddItem(m, rsMenuLdifSchemaFiles, 0, @LdifSchemaFilesClick);
   FMiLdifSchemaFrom := AddItem(m, rsMenuLdifSchemaFrom, 0, @LdifSchemaFromClick);
   AddItem(m, rsMenuPassword, 0, @PasswordToolClick);
@@ -1662,7 +1664,7 @@ var
   p: TConnectionProfile;
   names, uuids: TStringList;
   folder: string;
-  secret: RawByteString;
+  secret, stored: RawByteString;
   remember: Boolean;
 begin
   ref := SelectedRef;
@@ -1674,7 +1676,14 @@ begin
   try
     FolderLists(FCtx.Document, names, uuids);
     folder := FCtx.Document.ProfileFolder(p.Uuid);
-    if not EditProfile(Self, p, names, uuids, folder, secret, remember) then Exit;
+    // Le mot de passe garde revient dans le champ: on le voit, et l'onglet Test s'en sert.
+    stored := '';
+    if p.AuthMode = amSimple then ResolveBindSecret(FCtx.Document, p, nil, stored);
+    try
+      if not EditProfile(Self, p, names, uuids, folder, secret, remember, stored) then Exit;
+    finally
+      WipeString(stored);
+    end;
     try
       StoreProfile(FCtx.Document, p, folder, secret, remember);
     finally
@@ -2317,6 +2326,24 @@ begin
   if tab = nil then Exit;
   c := FCtx.Connections.Find(tab.ProfileUuid);
   if c <> nil then ShowSchemaBrowser(Self, FCtx, c.Profile.Uuid);
+end;
+
+procedure TMainForm.TemplatesClick(Sender: TObject);
+var
+  tab: TDirectoryTab;
+  uuid: string;
+begin
+  if (FCtx.Document = nil) or FDocLocked then
+  begin
+    RtMessageDlg(RT_APP_NAME, rsNeedDocument, mtInformation, [mbOK], 0);
+    Exit;
+  end;
+  // Sans annuaire ouvert la liste reste consultable: l'edition, elle, attend un schema.
+  uuid := '';
+  tab := ActiveDirectoryTab;
+  if tab <> nil then uuid := tab.ProfileUuid;
+  ShowTemplateManager(Self, FCtx, uuid);
+  UpdateStatus;
 end;
 
 procedure TMainForm.EscapeToolClick(Sender: TObject);

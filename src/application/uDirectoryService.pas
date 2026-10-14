@@ -12,7 +12,7 @@ interface
 
 uses
   SysUtils, Classes, uConnectionProfile, uLdapEntry, uLdapSchema, uSearchModel, uChangeSet,
-  uLdapErrors, uUiInbox, uDirectoryWorker, uConnections, uWriteJournal;
+  uLdapErrors, uUiInbox, uDirectoryWorker, uConnections, uWriteJournal, uLdapDn;
 
 const
   LDAP_CONTROL_ASSERTION_OID = '1.3.6.1.1.12';
@@ -78,6 +78,23 @@ function RdnCaption(const ADn: string): string;
 function SameDnStrict(const A, B: string): Boolean;
 
 type
+  // Regle des valeurs de DN par attribut: celle du schema, sinon les attributs de nommage de la
+  // RFC 4519 (caseIgnore). Inconnu: compare a l'octet pres. Ne survit pas a sa connexion.
+  TDnCaseRules = class
+  private
+    FSchema: TSchemaSnapshot;
+    FAlways: Boolean;
+  public
+    constructor Create(AConn: TDirectoryConnection);
+    constructor CreateFor(ASchema: TSchemaSnapshot; AKind: TProviderKind);
+    function Folds(const AType: string): TDnValueFold;
+    // Nom principal du schema en minuscules; vide si inconnu, l'appelant garde le sien.
+    function Canon(const AType: string): string;
+    function Match(const AType: string; const A, B: RawByteString): TDnMatch;
+    // A liberer avant les regles.
+    function NewComparer: TDnComparer;
+  end;
+
   TOrphanWriteKind = (owkNone, owkSuccess, owkUnknownOutcome, owkFailed);
 
 // L'ecriture n'est JAMAIS relancee: rejouer une issue inconnue, c'est parfois appliquer deux fois
@@ -91,7 +108,75 @@ function IsUnsettledWrite(AMsg: TUiMessage; AJournal: TWriteJournal): Boolean;
 implementation
 
 uses
-  uLdapFilter, uLdapDn, uNextId, uLdifStore, uServerKind;
+  uLdapFilter, uNextId, uLdifStore, uServerKind, uMatchingRules;
+
+constructor TDnCaseRules.Create(AConn: TDirectoryConnection);
+begin
+  inherited Create;
+  if AConn = nil then Exit;
+  FSchema := AConn.Schema;
+  // Active Directory compare tous les DN sans la casse et ne publie pas ses regles d'egalite.
+  FAlways := EffectiveServerKind(AConn.Profile, AConn.RootDse) = pkActiveDirectory;
+end;
+
+constructor TDnCaseRules.CreateFor(ASchema: TSchemaSnapshot; AKind: TProviderKind);
+begin
+  inherited Create;
+  FSchema := ASchema;
+  FAlways := AKind = pkActiveDirectory;
+end;
+
+function TDnCaseRules.Folds(const AType: string): TDnValueFold;
+const
+  STANDARD: array[0..25] of string = ('cn', 'commonname', 'ou', 'organizationalunitname', 'o',
+    'organizationname', 'dc', 'domaincomponent', 'uid', 'userid', 'c', 'countryname', 'l',
+    'localityname', 'st', 'stateorprovincename', 'street', 'streetaddress', 'sn', 'surname',
+    'givenname', 'title', 'serialnumber', 'mail', 'rfc822mailbox', 'name');
+var
+  rule, t: string;
+  i: Integer;
+begin
+  if FAlways then Exit(dfCaseIgnore);
+  rule := '';
+  if FSchema <> nil then rule := FSchema.EffectiveEquality(AType);
+  if rule <> '' then
+    case RuleKindFromName(rule) of
+      rkCaseIgnore, rkCaseIgnoreIA5: Exit(dfCaseIgnore);
+      rkCaseExact, rkCaseExactIA5: Exit(dfCaseExact);
+    else
+      Exit(dfExact);
+    end;
+  t := LowerCase(AType);
+  for i := 0 to High(STANDARD) do
+    if t = STANDARD[i] then Exit(dfCaseIgnore);
+  Result := dfExact;
+end;
+
+function TDnCaseRules.Match(const AType: string; const A, B: RawByteString): TDnMatch;
+var
+  same: Boolean;
+begin
+  case Folds(AType) of
+    dfCaseIgnore: same := SqueezeSpaces(LowerCase(A)) = SqueezeSpaces(LowerCase(B));
+    dfCaseExact: same := SqueezeSpaces(A) = SqueezeSpaces(B);
+  else
+    same := A = B;
+  end;
+  if same then Result := dmEqual else Result := dmDifferent;
+end;
+
+function TDnCaseRules.Canon(const AType: string): string;
+begin
+  Result := '';
+  if FSchema <> nil then Result := FSchema.CanonicalAttrName(AType);
+end;
+
+function TDnCaseRules.NewComparer: TDnComparer;
+begin
+  Result := TDnComparer.Create;
+  Result.Matcher := @Match;
+  Result.TypeCanon := @Canon;
+end;
 
 function IsLdifPlaceholder(AConn: TDirectoryConnection; const AClasses: string): Boolean;
 begin

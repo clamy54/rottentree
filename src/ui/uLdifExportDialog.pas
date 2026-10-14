@@ -4,9 +4,8 @@ unit uLdifExportDialog;
 
 {$mode objfpc}{$H+}
 
-// Export LDIF d'une entree, avec ou sans son sous-arbre relu page par page. Un resultat incomplet
-// n'est ecrit qu'avec accord explicite, et le fichier l'avoue. Rien ne touche le disque avant la fin
-// de la lecture.
+// Export LDIF d'une entree ou d'une selection. Incomplet: ecrit seulement sur accord, et le
+// fichier l'avoue.
 
 interface
 
@@ -17,6 +16,7 @@ uses
 resourcestring
   rsLxTitle = 'Export LDIF';
   rsLxEntry = 'Entry: %s';
+  rsLxSelection = 'Selection: %d entries, from %s';
   rsLxFile = 'Destination file';
   rsLxBrowse = 'Browse...';
   rsLxChildren = 'Include child entries';
@@ -41,11 +41,20 @@ resourcestring
   rsLxEntryIncomplete = 'some values could not be decoded';
   rsLxEntryTruncated = 'some attributes were truncated by a size limit';
   rsLxSchemaChanged = 'Nothing written: the schema of the connection was read again during the export. Export again.';
+  rsLxBaseFailed = 'Nothing written: %s could not be read (%s).';
+  rsLxNotConnected = 'not connected';
 
 type
   TLdifExportDialog = class(TOpsDialog)
   private
     FEntry: TLdapEntry;
+    FDns: TStringArray;
+    FBases: TStringArray;
+    FBaseIndex: Integer;
+    // Entrees rendues par la base en cours: zero, c'est une entree choisie absente du fichier.
+    FBaseGot: Integer;
+    FPartial: string;
+    FSeen: TStringList;
     FFile: TEdit;
     FChildren: TRtCheckBox;
     FExclude: TRtCheckBox;
@@ -65,6 +74,8 @@ type
     function NewCollector: TLdifExportCollector;
     function CollectorSchemaKept: Boolean;
     function Save(const ACoverage: string): Boolean;
+    function SearchBase: Boolean;
+    function CoverageLabel: string;
   protected
     procedure OnEntries(AMsg: TEntriesMsg); override;
     procedure OnFailed(AMsg: TTaskFailedMsg); override;
@@ -75,6 +86,8 @@ type
     // AEntry est copiee: l'entree de l'arbre peut disparaitre en plein export.
     constructor CreateExport(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid: string;
       AEntry: TLdapEntry);
+    constructor CreateExportMany(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid: string;
+      const ADns: TStringArray);
     destructor Destroy; override;
     procedure SetFileName(const APath: string);
     procedure SetOptions(AChildren, AExclude: Boolean);
@@ -87,12 +100,14 @@ type
 
 function ShowLdifExport(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid: string;
   AEntry: TLdapEntry): Boolean;
+function ShowLdifExportMany(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid: string;
+  const ADns: TStringArray): Boolean;
 
 implementation
 
 uses
   uUiKit, uTheme, uSearchModel, uValueFile, uLdifExportWork, uRtMessage, uVersion,
-  uCancel, uLdapDn, uPasswordWork, LazFileUtils;
+  uCancel, uLdapDn, uPasswordWork, uDirectoryService, LazFileUtils;
 
 var
   GIncludeChildren: Boolean = False;
@@ -145,11 +160,36 @@ begin
   ApplyTheme;
 end;
 
+constructor TLdifExportDialog.CreateExportMany(AOwner: TComponent; ACtx: TAppContext;
+  const AProfileUuid: string; const ADns: TStringArray);
+begin
+  inherited CreateFor(AOwner, ACtx, AProfileUuid, rsLxTitle, 760, 270);
+  SetIcon('file-export');
+  FDns := Copy(ADns);
+  FAutoAnswer := mrNone;
+  FMaxEntries := EXPORT_MAX_ENTRIES;
+  if Length(FDns) > 0 then
+    MakeDataLabel(Body, Format(rsLxSelection, [Length(FDns), FDns[0]]));
+  FFile := MakeEditRow(Body, rsLxFile);
+  FFile.Text := DefaultDir + SuggestedName('');
+  FBrowseBtn := MakeButton(FFile.Parent, rsLxBrowse, @BrowseClick, alRight);
+  FChildren := MakeCheck(Body, rsLxChildren);
+  FChildren.Checked := GIncludeChildren;
+  FExclude := MakeCheck(Body, rsLxExclude);
+  FExclude.Checked := GExcludeManaged;
+  FExportBtn := AddButton(rsLxExport, mrNone, True);
+  FExportBtn.OnClick := @ExportClick;
+  AddButton(rsLxCancel, mrCancel, False, True);
+  OnCloseQuery := @CloseQueryHandler;
+  ApplyTheme;
+end;
+
 destructor TLdifExportDialog.Destroy;
 begin
   // Ecriture en cours annulee: le fichier precedent reste en place.
   if FSaveTask <> 0 then PasswordWork.CancelOwner(Self);
   FCollector.Free;
+  FSeen.Free;
   FEntry.Free;
   inherited Destroy;
 end;
@@ -251,7 +291,7 @@ end;
 procedure TLdifExportDialog.StartExport;
 var
   path, problem: string;
-  req: TSearchRequest;
+  rules: TDnCaseRules;
 begin
   if Tasks.Pending('export') then Exit;
   path := Trim(FFile.Text);
@@ -274,7 +314,7 @@ begin
   GExcludeManaged := FExclude.Checked;
   FreeAndNil(FCollector);
   FCollector := NewCollector;
-  if not FChildren.Checked then
+  if (FEntry <> nil) and not FChildren.Checked then
   begin
     problem := EntryCoverageProblem(FEntry);
     FCollector.Add(FEntry);
@@ -291,16 +331,58 @@ begin
     Save('entry ' + FEntry.Dn);
     Exit;
   end;
+  // Une recherche par base; une base couverte par une autre n'est pas relue.
+  if FEntry <> nil then
+  begin
+    SetLength(FBases, 1);
+    FBases[0] := FEntry.Dn;
+  end
+  else if FChildren.Checked then
+  begin
+    rules := TDnCaseRules.Create(Conn);
+    try
+      FBases := DnOutermost(FDns, @rules.Folds, @rules.Canon);
+    finally
+      rules.Free;
+    end;
+  end
+  else
+    FBases := Copy(FDns);
+  if Length(FBases) = 0 then Exit;
+  FBaseIndex := 0;
+  FPartial := '';
+  FreeAndNil(FSeen);
+  FSeen := TStringList.Create;
+  FSeen.CaseSensitive := True;
+  FSeen.Sorted := True;
+  if not SearchBase then Exit;
+  SetRunning(True);
+  SetStatus(Format(rsLxReading, [0]), usMuted);
+end;
+
+function TLdifExportDialog.SearchBase: Boolean;
+var
+  req: TSearchRequest;
+begin
+  FBaseGot := 0;
   req := DefaultSearchRequest;
-  req.BaseDn := FEntry.Dn;
-  req.Scope := ssSubtree;
+  req.BaseDn := FBases[FBaseIndex];
+  if FChildren.Checked then req.Scope := ssSubtree else req.Scope := ssBase;
   req.Filter := '(objectClass=*)';
   req.Attributes := ['*', '+'];
   req.SizeLimit := 0;
   req.TimeLimitSec := 0;
-  if Search(req, 'export') = 0 then Exit;
-  SetRunning(True);
-  SetStatus(Format(rsLxReading, [0]), usMuted);
+  Result := Search(req, 'export') <> 0;
+end;
+
+function TLdifExportDialog.CoverageLabel: string;
+begin
+  if FEntry <> nil then
+    Result := 'subtree of ' + FEntry.Dn
+  else if FChildren.Checked then
+    Result := Format('subtrees of %d selected entries', [Length(FDns)])
+  else
+    Result := Format('%d selected entries', [Length(FDns)]);
 end;
 
 procedure TLdifExportDialog.OnEntries(AMsg: TEntriesMsg);
@@ -321,6 +403,14 @@ begin
   end;
   if AMsg.Entries <> nil then
     for i := 0 to AMsg.Entries.Count - 1 do
+    begin
+      Inc(FBaseGot);
+      // Bases qui se recouvrent malgre l'elagage: une entree n'est ecrite qu'une fois.
+      if FSeen <> nil then
+      begin
+        if FSeen.IndexOf(TLdapEntry(AMsg.Entries[i]).Dn) >= 0 then Continue;
+        FSeen.Add(TLdapEntry(AMsg.Entries[i]).Dn);
+      end;
       if not FCollector.Add(TLdapEntry(AMsg.Entries[i])) then
       begin
         // Budget depasse: la recherche s'arrete et rien n'est ecrit.
@@ -330,34 +420,72 @@ begin
         FCtx.Log(mlError, rsLxTitle, StatusText);
         Exit;
       end;
+    end;
   if not AMsg.Final then
   begin
     SetStatus(Format(rsLxReading, [FCollector.Count]), usMuted);
     Exit;
   end;
-  SetRunning(False);
   outcome := SearchOutcome(AMsg.Completion);
   reason := CoverageDescription(srsDone, AMsg.Completion);
-  if (outcome = soFailed) or (FCollector.Count = 0) then
+  if outcome = soCancelled then
+  begin
+    SetRunning(False);
+    Exit;
+  end;
+  if outcome = soFailed then
+  begin
+    SetRunning(False);
+    if FEntry <> nil then
+      SetStatus(Format(rsLxSearchFailed, [reason]), usError)
+    else
+      SetStatus(Format(rsLxBaseFailed, [FBases[FBaseIndex], reason]), usError);
+    FCtx.Log(mlError, rsLxTitle, StatusText);
+    Exit;
+  end;
+  if outcome = soPartial then
+  begin
+    if FPartial <> '' then FPartial := FPartial + '; ';
+    if FEntry <> nil then FPartial := FPartial + reason
+    else FPartial := FPartial + FBases[FBaseIndex] + ': ' + reason;
+  end
+  else if (FEntry = nil) and (FBaseGot = 0) then
+  begin
+    // Reussie mais vide (entree disparue, ACL): un trou silencieux, l'export devient partiel.
+    if FPartial <> '' then FPartial := FPartial + '; ';
+    FPartial := FPartial + FBases[FBaseIndex] + ': no entry returned';
+  end;
+  if FBaseIndex < High(FBases) then
+  begin
+    Inc(FBaseIndex);
+    if not SearchBase then
+    begin
+      SetRunning(False);
+      SetStatus(Format(rsLxBaseFailed, [FBases[FBaseIndex], rsLxNotConnected]), usError);
+      FCtx.Log(mlError, rsLxTitle, StatusText);
+    end;
+    Exit;
+  end;
+  SetRunning(False);
+  if FCollector.Count = 0 then
   begin
     SetStatus(Format(rsLxSearchFailed, [reason]), usError);
     FCtx.Log(mlError, rsLxTitle, StatusText);
     Exit;
   end;
-  if outcome = soCancelled then Exit;
-  if outcome = soPartial then
+  if FPartial <> '' then
   begin
     // Jamais de fichier incomplet sans accord explicite: une sauvegarde trouee ne se remarque qu'a la
     // restauration.
-    if Ask(Format(rsLxPartial, [FCollector.Count, reason]), mtWarning) <> mrYes then
+    if Ask(Format(rsLxPartial, [FCollector.Count, FPartial]), mtWarning) <> mrYes then
     begin
       SetStatus(rsLxPartialNotSaved, usWarning);
       Exit;
     end;
-    Save(Format('subtree of %s, PARTIAL: %s', [FEntry.Dn, reason]));
+    Save(Format('%s, PARTIAL: %s', [CoverageLabel, FPartial]));
     Exit;
   end;
-  Save(Format('subtree of %s, %s', [FEntry.Dn, reason]));
+  Save(Format('%s, %s', [CoverageLabel, reason]));
 end;
 
 procedure TLdifExportDialog.OnFailed(AMsg: TTaskFailedMsg);
@@ -458,6 +586,21 @@ begin
   Result := False;
   if AEntry = nil then Exit;
   d := TLdifExportDialog.CreateExport(AOwner, ACtx, AProfileUuid, AEntry);
+  try
+    Result := d.ShowModal = mrOk;
+  finally
+    d.Free;
+  end;
+end;
+
+function ShowLdifExportMany(AOwner: TComponent; ACtx: TAppContext; const AProfileUuid: string;
+  const ADns: TStringArray): Boolean;
+var
+  d: TLdifExportDialog;
+begin
+  Result := False;
+  if Length(ADns) = 0 then Exit;
+  d := TLdifExportDialog.CreateExportMany(AOwner, ACtx, AProfileUuid, ADns);
   try
     Result := d.ShowModal = mrOk;
   finally
