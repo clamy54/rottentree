@@ -96,9 +96,7 @@ resourcestring
     LineEnding + 'No: leave them out; those values are to be set again after the import.';
   rsTmConfirmParts = 'The export needs %d files:%s' + LineEnding + LineEnding + 'Write them?';
   rsTmWillReplace = '(will be replaced)';
-  rsTmRenameFailed = '%s could not be put in place.';
   rsTmWillRemove = '(older export, removed)';
-  rsTmRestoreFailed = '%s could not be put back: the previous version is kept as %s.';
   rsTmExportedParts = '%d template(s) exported in %d files, %s and following: one file would be too large to import.';
   rsTmImportNone = 'The file holds no template.';
   rsTmReadFailed = 'The file cannot be read.';
@@ -115,7 +113,7 @@ implementation
 
 uses
   uTheme, uConnections, uConnectionProfile, uServerKind, uRtMessage, uSafeSave,
-  uTemplateLibrary, uTemplateEditor, uEntryCreationPlan, uStrings;
+  uTemplateLibrary, uTemplateEditor, uEntryCreationPlan, uStrings, uFilePublish;
 
 function TemplateProblemOn(ACtx: TAppContext; const AProfileUuid: string;
   const T: TEntryTemplate): string;
@@ -444,88 +442,15 @@ begin
   else Result := ChangeFileExt(ABase, '') + '-' + IntToStr(AIndex) + ExtractFileExt(ABase);
 end;
 
-// Tout ou rien: au moindre accroc les anciennes parties reviennent. Une sauvegarde faite de deux
-// generations, c'est deux sauvegardes fausses.
 function PublishParts(const AParts, ATargets, AStale: TStringArray; out AError: string): Boolean;
 var
-  tag: string;
-  staged, saved, moved: TStringArray;
-  placed, i, n: Integer;
-  ms: TStringStream;
-  g: TGUID;
-  fail: string;
+  parts: TPublishParts;
+  i: Integer;
 begin
-  Result := False;
-  AError := '';
-  staged := nil;
-  saved := nil;
-  moved := nil;
-  placed := 0;
-  CreateGUID(g);
-  tag := '.' + LowerCase(Copy(GUIDToString(g), 2, 8));
-  SetLength(staged, Length(ATargets));
-  try
-    for i := 0 to High(ATargets) do
-    begin
-      // Nom deja pris: pas le notre, on n'y touche pas, ni maintenant ni au menage.
-      if FileExists(ATargets[i] + tag + '.part') then
-        raise EStreamError.CreateFmt(rsTmRenameFailed, [ATargets[i] + tag + '.part']);
-      staged[i] := ATargets[i] + tag + '.part';
-      ms := TStringStream.Create(AParts[i]);
-      try
-        SavePrivateStream(staged[i], ms);
-      finally
-        ms.Free;
-      end;
-    end;
-    for i := 0 to High(ATargets) + Length(AStale) do
-    begin
-      if i <= High(ATargets) then
-      begin
-        if not FileExists(ATargets[i]) then Continue;
-        n := Length(saved);
-        SetLength(saved, n + 1);
-        SetLength(moved, n + 1);
-        saved[n] := ATargets[i];
-      end
-      else
-      begin
-        n := Length(saved);
-        SetLength(saved, n + 1);
-        SetLength(moved, n + 1);
-        saved[n] := AStale[i - Length(ATargets)];
-      end;
-      moved[n] := saved[n] + tag + '.old';
-      if FileExists(moved[n]) or not RenameFile(saved[n], moved[n]) then
-      begin
-        fail := saved[n];
-        SetLength(saved, n);
-        SetLength(moved, n);
-        raise EStreamError.CreateFmt(rsTmRenameFailed, [fail]);
-      end;
-    end;
-    for i := 0 to High(ATargets) do
-    begin
-      if not ReplaceByRenamePrivate(staged[i], ATargets[i]) then
-        raise EStreamError.CreateFmt(rsTmRenameFailed, [ATargets[i]]);
-      placed := i + 1;
-    end;
-    for i := 0 to High(moved) do
-      DeleteFile(moved[i]);
-    Result := True;
-  except
-    on E: Exception do
-    begin
-      AError := E.Message;
-      for i := 0 to placed - 1 do
-        DeleteFile(ATargets[i]);
-      for i := 0 to High(moved) do
-        if not RenameFile(moved[i], saved[i]) then
-          AError := AError + LineEnding + Format(rsTmRestoreFailed, [saved[i], moved[i]]);
-      for i := 0 to High(staged) do
-        if staged[i] <> '' then DeleteFile(staged[i]);
-    end;
-  end;
+  parts := nil;
+  SetLength(parts, Length(ATargets));
+  for i := 0 to High(ATargets) do parts[i] := PublishText(ATargets[i], AParts[i]);
+  Result := PublishFiles(parts, AStale, AError);
 end;
 
 procedure TTemplateManager.ExportClick(Sender: TObject);

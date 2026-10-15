@@ -43,6 +43,17 @@ repository, copied next to this file by the packages).
 | JetBrains Mono font | SIL Open Font License 1.1 | `JetBrainsMono-OFL-1.1.txt` |
 | Tabler Icons | MIT | `Tabler-MIT.txt` |
 
+By Rottentree itself, as the standard schema of a new LDIF file
+(`resources/schema/` in the source repository).
+
+| Component | License | Text |
+|---|---|---|
+| OpenLDAP schema files `core`, `cosine`, `inetorgperson` and `nis` (OpenLDAP 2.7.1), with the RFC text they quote (Copyright The Internet Society) | OpenLDAP Public License 2.8 | `OpenLDAP-Public-License-2.8.txt` |
+
+The four files are shipped unmodified. `system.schema`, written for Rottentree,
+also carries the definitions that slapd builds in and that those files only
+hold as comments, copied from those comments.
+
 ## Compiler runtime
 
 | Component | License | Text |

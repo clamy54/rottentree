@@ -135,6 +135,7 @@ type
     procedure ToggleOperationalClick(Sender: TObject);
     procedure LdifEditorClick(Sender: TObject);
     procedure OpenLdifClick(Sender: TObject);
+    procedure NewLdifClick(Sender: TObject);
     procedure SaveLdifClick(Sender: TObject);
     procedure SaveLdifAsClick(Sender: TObject);
     procedure LdifSchemaFilesClick(Sender: TObject);
@@ -182,7 +183,7 @@ implementation
 uses
   uTheme, uThemeLoad, uUiKit, uIcons, uPreferences, uDocDialogs, uProfileDialog,
   uDocumentCrypto, uSessionModel, uLdapErrors, uVersion, uCancel,
-  uSearchTab, uLdifTab, uPasswordDialog, uCertDialog, uSchemaDialog, uToolsDialogs, uTemplateManager,
+  uSearchTab, uLdifTab, uNewLdifDialog, uLdifMeta, uPasswordDialog, uCertDialog, uSchemaDialog, uToolsDialogs, uTemplateManager,
   uAboutDialog, uCompareTab, uRtBytes, uExportActions, uLdifExportDialog, uPasswordWork, uConnectFlow, uEntryTab,
   uDirectoryService, uMonitorTab, uPasswordAuditTab, uDuplicateIdTab, uHomonymTab,
   uAdToolsDialog,
@@ -355,6 +356,7 @@ begin
   FMiSave := AddItem(m, rsMenuSave, PShortCut(VK_S), @SaveDocClick);
   FMiSaveAs := AddItem(m, rsMenuSaveAs, PShortCut(VK_S, True), @SaveAsDocClick);
   Sep(m);
+  AddItem(m, rsMenuNewLdif, 0, @NewLdifClick);
   AddItem(m, rsMenuOpenLdif, 0, @OpenLdifClick);
   FMiSaveLdif := AddItem(m, rsMenuSaveLdif, 0, @SaveLdifClick);
   FMiSaveLdifAs := AddItem(m, rsMenuSaveLdifAs, 0, @SaveLdifAsClick);
@@ -1846,6 +1848,14 @@ begin
   end;
 end;
 
+procedure TMainForm.NewLdifClick(Sender: TObject);
+var
+  path: string;
+begin
+  path := ShowNewLdif(Self, FCtx);
+  if path <> '' then OpenLdifFile(path);
+end;
+
 procedure TMainForm.OpenLdifFile(const APath: string);
 var
   path, uuid: string;
@@ -1913,6 +1923,12 @@ begin
       other.Profile.Name]), mtWarning, [mbOK], 0);
     Exit;
   end;
+  // Un compagnon qui decrit un autre annuaire ne survit pas au fichier qu'il accompagnait.
+  if not SameFileName(ExpandFileName(APath), AConn.Profile.LdifPath) and
+     FileExists(LdifMetaPath(ExpandFileName(APath))) and not FileExists(LdifMetaPath(AConn.Profile.LdifPath)) and
+     (RtMessageDlg(RT_APP_NAME, Format(rsLdifStaleMeta, [ExtractFileName(APath),
+       ExtractFileName(LdifMetaPath(APath))]), mtWarning, [mbYes, mbNo], 0) <> mrYes) then
+    Exit;
   // Ecraser le fichier ouvert: ce qu'il contenait sans etre charge est perdu, d'ou la question.
   if SameFileName(ExpandFileName(APath), AConn.Profile.LdifPath) and
      (AConn.LdifRewriteNote <> '') and
@@ -2035,6 +2051,7 @@ begin
     Exit;
   end;
   FCtx.Connections.UseLdifSchema(c, schema);
+  LdifModified(nil);
   FCtx.Sensitive.LearnSchema(schema);
   Log(mlInfo, c.Profile.Name, Format(rsLdifSchemaLoaded, [c.Profile.Name, report]));
 end;
@@ -2086,6 +2103,7 @@ begin
   src := FCtx.Connections.Find(key);
   if (c = nil) or (src = nil) or (src.Schema = nil) then Exit;
   FCtx.Connections.UseLdifSchema(c, src.Schema.Clone);
+  LdifModified(nil);
   Log(mlInfo, c.Profile.Name, Format(rsLdifSchemaBorrowed, [src.Profile.Name, c.Profile.Name,
     c.Schema.AttributeTypeCount, c.Schema.ObjectClassCount]));
 end;

@@ -74,6 +74,10 @@ resourcestring
   rsFetching = 'Connecting to read the root DSE...';
   rsShowConfig = 'Also show the server configuration (cn=config, cn=monitor...) when this identity can read it';
   rsFetchNone = 'The server returned no naming context (anonymous access may be restricted). Enter a base manually.';
+  rsFetchingBind = 'Nothing readable anonymously (%s): trying the bind of the Authentication tab...';
+  rsFetchAnonEmpty = 'no naming context returned';
+  rsFetchBoth = 'No base DN found. Anonymous read: %s. With the bind of the profile: %s. Enter a base manually.';
+  rsFetchAppendRaw = ' (the bind DN was sent as typed: there was no base to append yet)';
   rsConnectTimeout = 'Connection timeout (s)';
   rsTlsTimeout = 'TLS timeout (s)';
   rsOpTimeout = 'Operation timeout (s)';
@@ -124,6 +128,10 @@ type
     FFolderUuids: TStringList;
     FLastHost: string;
     FLastPort: Integer;
+    // recherche des bases: l'anonyme d'abord, le bind du profil seulement s'il ne donne rien
+    FFetchAnon, FFetchBindNext: Boolean;
+    FAnonFailure: string;
+    procedure FetchWithBind(AData: PtrInt);
     procedure BuildGeneral(AParent: TWinControl);
     procedure BuildAuth(AParent: TWinControl);
     procedure BuildTls(AParent: TWinControl);
@@ -153,7 +161,7 @@ type
     procedure AddBaseClick(Sender: TObject);
     procedure RemoveBaseClick(Sender: TObject);
     procedure TestClick(Sender: TObject);
-    procedure StartWorker(AFetch: Boolean);
+    procedure StartWorker(AFetch: Boolean; AAnonymous: Boolean = False);
     procedure StopWorker;
     procedure HandleMessage(AMsg: TUiMessage);
     procedure CloseQueryHandler(Sender: TObject; var CanClose: Boolean);
@@ -166,6 +174,10 @@ type
     function RememberSecret: Boolean;
     // Mot de passe deja garde dans le document: montre masque, pour le voir ou tester avec.
     procedure SetStoredSecret(const ASecret: RawByteString);
+    // essais: comme le bouton de l'onglet Base DNs
+    procedure FetchBases;
+    function BasesStatus: string;
+    function BasesText: string;
   end;
 
 function EditProfile(AOwner: TComponent; AProfile: TConnectionProfile;
@@ -240,6 +252,7 @@ end;
 
 destructor TProfileDialog.Destroy;
 begin
+  Application.RemoveAsyncCalls(Self);
   UiInbox.Unsubscribe(Self);
   FProbe.Free;
   FFolderUuids.Free;
@@ -670,7 +683,7 @@ begin
   end;
 end;
 
-procedure TProfileDialog.StartWorker(AFetch: Boolean);
+procedure TProfileDialog.StartWorker(AFetch: Boolean; AAnonymous: Boolean);
 var
   tmp: TConnectionProfile;
   secret: RawByteString;
@@ -680,9 +693,10 @@ begin
     tmp.Assign(FProfile);
     SaveToProfile(tmp);
     FDirtySinceRun := False;
+    if AAnonymous then tmp.AuthMode := amAnonymous;
     // Le mot de passe ne part qu'en bind simple. En EXTERNAL, l'identite vient du champ
     // dedie du profil, jamais de celui-ci.
-    if not SimpleBindSelected then secret := ''
+    if AAnonymous or not SimpleBindSelected then secret := ''
     else FSecret.GetSecret(secret);
     try
       if AFetch then
@@ -704,7 +718,35 @@ end;
 
 procedure TProfileDialog.FetchClick(Sender: TObject);
 begin
+  // Le root DSE se lit sans bind (RFC 4512), meme sur un AD verrouille. Envoyer le mot de passe
+  // a chaque clic, c'est offrir trois essais au verrouillage de compte pendant qu'on configure.
+  FFetchAnon := True;
+  FFetchBindNext := FAuthMode.ItemIndex <> Ord(amAnonymous);
+  FAnonFailure := '';
   FBaseStatus.Caption := rsFetching;
+  StartWorker(True, True);
+end;
+
+procedure TProfileDialog.FetchBases;
+begin
+  FetchClick(nil);
+end;
+
+function TProfileDialog.BasesStatus: string;
+begin
+  Result := FBaseStatus.Caption;
+end;
+
+function TProfileDialog.BasesText: string;
+begin
+  Result := Trim(FBaseList.Items.Text);
+end;
+
+procedure TProfileDialog.FetchWithBind(AData: PtrInt);
+begin
+  // un reglage touche entre-temps: la sonde est caduque, le message "stale" est deja la
+  if FDirtySinceRun then Exit;
+  FFetchAnon := False;
   StartWorker(True);
 end;
 
@@ -764,12 +806,32 @@ begin
     conn := TConnectedMsg(AMsg);
     if FProbe.Kind = pkFetchBases then
     begin
-      if not conn.Ok then
+      bases := nil;
+      if conn.Ok then bases := BaseDnCandidates(conn.RootDse);
+      if FFetchAnon and FFetchBindNext and (Length(bases) = 0) and
+         (conn.Ok or (conn.Error.Category in [lecAuthentication, lecAccessDenied, lecRefused,
+           lecNoSuchObject, lecProtocol, lecOther])) then
       begin
-        FBaseStatus.Caption := ErrorToText(conn.Error);
+        // Refus ou root DSE vide: le bind du profil a sa chance. Panne reseau ou TLS: il ne
+        // ferait pas mieux, inutile d'y exposer le mot de passe.
+        if conn.Ok then FAnonFailure := rsFetchAnonEmpty else FAnonFailure := ErrorToText(conn.Error);
+        FFetchBindNext := False;
+        FBaseStatus.Caption := Format(rsFetchingBind, [FAnonFailure]);
+        Application.QueueAsyncCall(@FetchWithBind, 0);
         Exit;
       end;
-      bases := BaseDnCandidates(conn.RootDse);
+      if not conn.Ok then
+      begin
+        if FAnonFailure <> '' then
+        begin
+          FBaseStatus.Caption := Format(rsFetchBoth, [FAnonFailure, ErrorToText(conn.Error)]);
+          if SimpleBindSelected and FAppendBase.Checked and (FBaseList.Items.Count = 0) then
+            FBaseStatus.Caption := FBaseStatus.Caption + rsFetchAppendRaw;
+        end
+        else
+          FBaseStatus.Caption := ErrorToText(conn.Error);
+        Exit;
+      end;
       names := '';
       for i := 0 to High(bases) do
       begin

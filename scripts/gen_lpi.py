@@ -43,6 +43,9 @@ def app_version():
 def resources():
     # les licences des fontes et des icones sont embarquees par RottenUI
     res = [("APPICON_PNG", "../resources/icons/rottentree-256.png")]
+    # schema LDAP standard d'un LDIF neuf: fichiers OpenLDAP tels quels, plus le socle RFC 4512
+    for name in ("system", "core", "cosine", "inetorgperson", "nis"):
+        res.append(("SCHEMA_" + name.upper(), "../resources/schema/" + name + ".schema"))
     for path in sorted(glob.glob(os.path.join(ROOT, "licenses", "*.txt"))) + \
             sorted(glob.glob(os.path.join(ROOT, "licenses", "*.md"))):
         base = os.path.splitext(os.path.basename(path))[0]

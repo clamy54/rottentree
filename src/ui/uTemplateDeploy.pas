@@ -114,6 +114,8 @@ type
     procedure EndUniqueScan(const AFailure: string);
     procedure DeferredCreate(AData: PtrInt);
     function IsAdPassword(AIndex: Integer): Boolean;
+    // mot de passe AD et cible LDIF: rien a saisir, rien a ecrire
+    function FileSkips(AIndex: Integer): Boolean;
     function PolicyProblem(AIndex: Integer): string;
     procedure ValidateAdPassword(Sender: TObject; const ASecret: RawByteString; var ARefusal: string);
     procedure BuildUi;
@@ -208,6 +210,7 @@ resourcestring
   rsTfPwdAdFixed = 'fixed by the template, sent with the account';
   rsTfPwdAdComposed = 'computed from the other values, sent with the account';
   rsTfPwdRandom = 'drawn at random when the entry is created, shown once';
+  rsTfPwdFile = 'not written into a file: set it after the import';
   rsTfAskPwdTitle = 'Password of the new account';
   rsTfAskPwd = 'Password';
   rsTfAskPwdConfirm = 'Confirm';
@@ -249,6 +252,8 @@ resourcestring
   rsTfUniqueTooMany = 'too many values under %s';
   rsTfUniqueNoBase = 'no naming context contains %s';
   rsTfUniqueNumber = 'Ready with number %d: %s.';
+  rsTfFileOnly = 'Ready. Names were checked against this file only: the target directory is not read, ' +
+    'and may already hold some of them. Its import will say so.';
   rsTfForestUnknown = 'Ready. Names were checked in %s only: the domains of the forest could not be listed, ' +
     'so an address or UPN held in another domain may not be seen.';
   rsTfForestPartial = 'Ready. Names were checked in %s only: the other %d domain(s) of the forest are not ' +
@@ -417,7 +422,7 @@ begin
     f := ADlg.FT.Fields[AIndex];
     if ADlg.IsSecret(AIndex) then
     begin
-      if not ADlg.IsComputedSecret(AIndex) then
+      if not ADlg.IsComputedSecret(AIndex) and not ADlg.FileSkips(AIndex) then
       begin
         FSecretBtn := TRtFlatButton.Create(Self);
         FSecretBtn.Parent := Self;
@@ -599,7 +604,13 @@ begin
     r := Rect(ROW_LEFT + w, 0, ROW_LEFT + FDlg.FLabelW, ClientHeight);
     Canvas.TextRect(r, r.Left, y, f.Attr);
   end;
-  if FDlg.IsComputedSecret(FIndex) then
+  if FDlg.FileSkips(FIndex) then
+  begin
+    Canvas.Font.Color := MutedColor(Color);
+    r := Rect(FTextLeft + 7, 0, ClientWidth - 12 - ScreenIconSize(16) - 8, ClientHeight);
+    Canvas.TextRect(r, r.Left, y, rsTfPwdFile);
+  end
+  else if FDlg.IsComputedSecret(FIndex) then
   begin
     Canvas.Font.Color := MutedColor(Color);
     r := Rect(FTextLeft + 7, 0, ClientWidth - 12 - ScreenIconSize(16) - 8, ClientHeight);
@@ -975,6 +986,14 @@ begin
     TemplatePasswordAttr(FT.Fields[AIndex].Attr, pkActiveDirectory, Schema);
 end;
 
+function TTemplateForm.FileSkips(AIndex: Integer): Boolean;
+var
+  c: TDirectoryConnection;
+begin
+  c := Conn;
+  Result := (c <> nil) and (c.Profile.LdifPath <> '') and IsAdPassword(AIndex);
+end;
+
 function TTemplateForm.PolicyProblem(AIndex: Integer): string;
 begin
   Result := '';
@@ -1246,7 +1265,9 @@ begin
       end;
       FState[i].Error := '';
       FState[i].Missing := False;
-      if IsComputedSecret(i) then
+      if FileSkips(i) then
+        // rien: ni manquant ni a juger, il ne part pas
+      else if IsComputedSecret(i) then
       begin
         // Tire au sort a l'envoi: ni manquant ni a juger avant.
         if FT.Fields[i].Source <> tsRandom then
@@ -1373,6 +1394,11 @@ begin
   else if FUniqueResult.Lookalike <> '' then
   begin
     msg := Format(rsTfLookalike, [FUniqueResult.Lookalike]);
+    state := usWarning;
+  end
+  else if (Conn <> nil) and (Conn.Profile.LdifPath <> '') and (FUniqueState = tusDone) then
+  begin
+    msg := rsTfFileOnly;
     state := usWarning;
   end
   else if FForestDomains > 1 then
@@ -1615,7 +1641,8 @@ begin
     Exit;
   end;
   FUniqueState := tusReading;
-  if Provider = pkActiveDirectory then
+  // Un fichier n'a pas de foret: il a une cible qu'on ne lit pas, ce que dit le statut.
+  if (Provider = pkActiveDirectory) and (c.Profile.LdifPath = '') then
   begin
     // Inconnu tant que pas prouve: un refus de lire les partitions ne fait pas une foret d'un arbre.
     FForestDomains := -1;
@@ -1761,7 +1788,8 @@ begin
     end;
   // Tire une fois par formulaire: un envoi refuse puis repris garde le meme.
   for i := 0 to High(FState) do
-    if IsComputedSecret(i) and (FT.Fields[i].Source = tsRandom) and (FState[i].Text = '') then
+    if IsComputedSecret(i) and (FT.Fields[i].Source = tsRandom) and (FState[i].Text = '') and
+       not FileSkips(i) then
     begin
       if IsAdPassword(i) then
         FState[i].Text := RandomAdPassword(FT.Fields[i].RandomLength, FPolicy, ValueOf('sAMAccountName'),
@@ -1798,7 +1826,7 @@ begin
   end;
   for i := 0 to High(FState) do
   begin
-    if i = ri then Continue;
+    if (i = ri) or FileSkips(i) then Continue;
     if IsAdPassword(i) then
     begin
       if FState[i].Text <> '' then p.AdPassword := FState[i].Text;

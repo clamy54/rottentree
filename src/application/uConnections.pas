@@ -134,7 +134,7 @@ type
 implementation
 
 uses
-  uDocumentCrypto, uSchemaReader, uServerKind;
+  uDocumentCrypto, uSchemaReader, uServerKind, uLdifMeta;
 
 resourcestring
   rsLdifNoSchema = 'an LDIF file carries no schema';
@@ -599,6 +599,8 @@ begin
   AConn.SetSchema(ASchema);
   AConn.SchemaReason := '';
   SubmitCommand(AConn, cmd);
+  // Fichier a compagnon: le schema s'y enregistre, donc fermer sans demander perdrait ce choix.
+  if FileExists(LdifMetaPath(AConn.Profile.LdifPath)) then AConn.LdifModified := True;
 end;
 
 function TConnectionManager.NoteDelivered(AMsg: TUiMessage): Boolean;

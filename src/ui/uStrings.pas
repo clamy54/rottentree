@@ -25,6 +25,9 @@ resourcestring
   rsMenuSave = 'Save';
   rsMenuSaveAs = 'Save As...';
   rsMenuImportLdif = 'Import or Export LDIF...';
+  rsMenuNewLdif = 'New LDIF File...';
+  rsLdifStaleMeta = '%s comes with a schema file, %s, that describes another directory. It is removed ' +
+    'along, so that the file does not reopen with a schema that is not its own. Go on?';
   rsMenuOpenLdif = 'Open LDIF File...';
   rsMenuSaveLdif = 'Save LDIF File';
   rsMenuSaveLdifAs = 'Save LDIF File As...';

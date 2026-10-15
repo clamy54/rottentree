@@ -175,6 +175,7 @@ resourcestring
   rsTbReadyLookalike = 'ready - same name as %s: homonym or duplicate?';
   rsTbForestPartial = 'Names were checked in %s only: the other %d domain(s) of the forest are not read.';
   rsTbForestUnknown = 'Names were checked in %s only: the domains of the forest could not be listed.';
+  rsTbFileOnly = 'Names were checked against this file only: the target directory is not read.';
   rsTbLookalikeAsk = '%d line(s) carry the name of an entry that already exists, in the directory or ' +
     'higher in the file. First one: line %d, like %s.' + LineEnding + LineEnding +
     'Homonyms get their own number; duplicates make two accounts for one person. Create them anyway?';
@@ -239,6 +240,7 @@ begin
   Tasks.OnMessage := @TaskMessage;
   Tasks.OnUntracked := @LocalMessage;
   FBatch := TTemplateBatch.Create(FT, FCtx.Sensitive, FParentDn);
+  FBatch.ToFile := (c <> nil) and (c.Profile.LdifPath <> '');
   FGroups := TGroupTargets.Create(Tasks, GROUP_TAG);
   BuildUi;
   ApplyTheme;
@@ -714,6 +716,11 @@ begin
     begin
       text_ := text_ + ' ' + Format(rsTbForestUnknown, [FUniqueBase]);
       state := usWarning;
+    end
+    else if FBatch.ToFile and FBatch.UniqueNeeded(Provider, Schema) then
+    begin
+      text_ := text_ + ' ' + rsTbFileOnly;
+      state := usWarning;
     end;
   end;
   if FRan then state := usMuted;
@@ -821,7 +828,7 @@ begin
     EndUniqueScan(rsTbNoConnection);
     Exit;
   end;
-  if Provider = pkActiveDirectory then
+  if (Provider = pkActiveDirectory) and (c.Profile.LdifPath = '') then
   begin
     // Inconnu tant que pas prouve: un refus de lire les partitions ne fait pas une foret d'un arbre.
     FForestDomains := -1;

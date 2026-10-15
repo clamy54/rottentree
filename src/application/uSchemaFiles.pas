@@ -23,6 +23,8 @@ resourcestring
   rsSchemaFilesNone = 'no schema definition found in %s';
 
 function SchemaFromFiles(const APaths: array of string; out AReport: string): TSchemaSnapshot;
+// Schema standard embarque: socle RFC 4512, core, cosine, inetOrgPerson et nis d'OpenLDAP.
+function StandardLdapSchema(out AReport: string): TSchemaSnapshot;
 procedure CollectSchemaDefinitions(const AText: RawByteString; ADefs: array of TStrings);
 
 implementation
@@ -171,6 +173,49 @@ begin
     if fs.Size > 0 then fs.ReadBuffer(Result[1], fs.Size);
   finally
     fs.Free;
+  end;
+end;
+
+function StandardLdapSchema(out AReport: string): TSchemaSnapshot;
+const
+  KINDS: array[0..4] of TSchemaDefKind = (sdkSyntax, sdkMatchingRule, sdkAttributeType,
+    sdkObjectClass, sdkDitContentRule);
+  NAMES: array[0..4] of string = ('SCHEMA_SYSTEM', 'SCHEMA_CORE', 'SCHEMA_COSINE',
+    'SCHEMA_INETORGPERSON', 'SCHEMA_NIS');
+var
+  defs: array[0..4] of TStrings;
+  i, k: Integer;
+  rs: TResourceStream;
+  text: RawByteString;
+begin
+  Result := nil;
+  AReport := '';
+  for k := 0 to High(defs) do defs[k] := TStringList.Create;
+  try
+    for i := 0 to High(NAMES) do
+    begin
+      rs := TResourceStream.Create(HINSTANCE, NAMES[i], PChar(PtrUInt(10)));
+      try
+        text := '';
+        SetLength(text, rs.Size);
+        if rs.Size > 0 then rs.ReadBuffer(text[1], rs.Size);
+      finally
+        rs.Free;
+      end;
+      CollectSchemaDefinitions(text, defs);
+    end;
+    Result := TSchemaSnapshot.Create;
+    for k := 0 to High(defs) do
+      for i := 0 to defs[k].Count - 1 do
+        Result.AddDefinition(KINDS[k], defs[k][i]);
+    Result.FetchedUtc := Now;
+    Result.SourceKey := 'standard-schema';
+    AReport := Format(rsSchemaFilesReport, [Result.AttributeTypeCount, Result.ObjectClassCount,
+      Length(NAMES)]);
+    if Result.Errors.Count > 0 then
+      AReport := AReport + '; ' + Format(rsSchemaFilesRejected, [Result.Errors.Count]);
+  finally
+    for k := 0 to High(defs) do defs[k].Free;
   end;
 end;
 

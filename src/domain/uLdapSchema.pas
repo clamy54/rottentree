@@ -132,6 +132,9 @@ type
     function Syntax(const AOid: string): TSchemaSyntax;
     function DitContentRule(const AClass: string): TSchemaDitContentRule;
     function DitContentRuleCount: Integer;
+    // toutes familles confondues, dans l'ordre de lecture
+    function ElementCount(AKind: TSchemaDefKind): Integer;
+    function ElementAt(AKind: TSchemaDefKind; AIndex: Integer): TSchemaElement;
     // Lecture incomplete (entree tronquee par un budget, valeurs non decodees): une
     // absence dans ce schema ne prouve rien.
     procedure MarkIncomplete(const AReason: string);
@@ -777,6 +780,30 @@ end;
 function TSchemaSnapshot.DitContentRuleCount: Integer;
 begin
   Result := FContentRules.Count;
+end;
+
+function TSchemaSnapshot.ElementCount(AKind: TSchemaDefKind): Integer;
+begin
+  case AKind of
+    sdkAttributeType: Result := FAttrs.Count;
+    sdkObjectClass: Result := FClasses.Count;
+    sdkMatchingRule: Result := FRules.Count;
+    sdkSyntax: Result := FSyntaxes.Count;
+  else
+    Result := FContentRules.Count;
+  end;
+end;
+
+function TSchemaSnapshot.ElementAt(AKind: TSchemaDefKind; AIndex: Integer): TSchemaElement;
+begin
+  case AKind of
+    sdkAttributeType: Result := TSchemaElement(FAttrs[AIndex]);
+    sdkObjectClass: Result := TSchemaElement(FClasses[AIndex]);
+    sdkMatchingRule: Result := TSchemaElement(FRules[AIndex]);
+    sdkSyntax: Result := TSchemaElement(FSyntaxes[AIndex]);
+  else
+    Result := TSchemaElement(FContentRules[AIndex]);
+  end;
 end;
 
 function TSchemaSnapshot.AttributeTypeCount: Integer;

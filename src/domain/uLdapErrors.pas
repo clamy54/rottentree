@@ -167,7 +167,9 @@ function ErrorToText(const E: TLdapError): string;
 begin
   if E.Category = lecNone then Exit('');
   Result := CategoryName(E.Category);
-  if E.Step <> '' then Result := Result + ' during ' + E.Step;
+  // "authentication during authentication": exact, et parfaitement inutile
+  if SameText(E.Step, Result) then Result := Result + ' failed'
+  else if E.Step <> '' then Result := Result + ' during ' + E.Step;
   if E.ResultCode <> 0 then
     Result := Result + ' (' + ResultCodeName(E.ResultCode) + ')';
   if E.Diagnostic <> '' then

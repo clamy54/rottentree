@@ -41,6 +41,7 @@ resourcestring
   rsLdifAssertion = 'the assertion is not true for this entry';
   rsLdifBadDn = 'invalid DN: %s';
   rsLdifBadRdn = 'invalid RDN';
+  rsLdifSchemaEntry = 'the schema of the file is not an entry of it';
 
 type
   TLdifNode = class
@@ -49,6 +50,10 @@ type
     Dn: string;
     Entry: TLdapEntry;
     Glue: Boolean;
+    // base declaree hors fichier: reste meme sans enfants
+    Pinned: Boolean;
+    // sous-schema venu du fichier compagnon: lisible, hors arbre, jamais ecrit
+    Hidden: Boolean;
     Parent: TLdifNode;
     // Enfants chaines: retrait et deplacement en temps constant, meme sous une OU de
     // trois cent mille comptes que personne n'a jamais rangee.
@@ -95,6 +100,7 @@ type
       out AError: TLdapError): Boolean;
     function RdnValuesKept(AEntry: TLdapEntry; const ADn: TLdapDn; out AAttr: string): Boolean;
     procedure Rekey(ANode: TLdifNode; const AOldBase, ANewBase: TLdapDn);
+    procedure LinkVia(ANode: TLdifNode; const ADn: TLdapDn; AAncestor: TLdifNode);
   public
     constructor Create;
     destructor Destroy; override;
@@ -116,6 +122,12 @@ type
       ADeleteOldRdn: Boolean): TLdapError;
     procedure WriteTo(AStream: TStream; AAddRecords: Boolean; const AEol: RawByteString);
     procedure SetSchema(ASchema: TSchemaSnapshot);
+    // Conteneur qui existe dans l'annuaire cible mais pas dans le fichier: niveau glue garde
+    // meme vide, pour que le fichier neuf ait ou ranger sa premiere entree.
+    procedure DeclareBase(const ADn: string);
+    // Sous-schema lu a cote du fichier; le magasin prend l'entree.
+    procedure AttachSubschema(AEntry: TLdapEntry);
+    procedure MarkActiveDirectory(const ADomainDn: string);
     function RootCount: Integer;
     function Root(AIndex: Integer): TLdifNode;
     property EntryCount: Integer read FEntryCount;
@@ -126,6 +138,7 @@ type
     property SubschemaDn: string read FSubschemaDn;
     property ChangeCount: Int64 read FChangeCount;
     property AddRecords: Boolean read FAddRecords;
+    property Schema: TSchemaSnapshot read FSchema;
   end;
 
 function IsKnownOperationalAttr(const ABase: string): Boolean;
@@ -273,7 +286,7 @@ var
   p, up: TLdifNode;
 begin
   p := AParent;
-  while (p <> nil) and (p <> FTop) and p.Glue and (p.ChildCount = 0) do
+  while (p <> nil) and (p <> FTop) and p.Glue and not p.Pinned and (p.ChildCount = 0) do
   begin
     up := p.Parent;
     Unlink(p);
@@ -831,6 +844,106 @@ begin
   end;
 end;
 
+procedure TLdifStore.LinkVia(ANode: TLdifNode; const ADn: TLdapDn; AAncestor: TLdifNode);
+var
+  cur, glue: TLdifNode;
+  level: TLdapDn;
+  key, parentKey: string;
+begin
+  cur := ANode;
+  level := ADn;
+  key := ANode.Key;
+  while DnRdnCount(level) > 1 do
+  begin
+    parentKey := Copy(key, Length(RdnMatchKey(level.Rdns[0])) + 2, MaxInt);
+    level := DnParent(level);
+    key := parentKey;
+    if key = AAncestor.Key then Break;
+    // niveau deja connu: il sera range lui-meme, on s'y accroche
+    if FIndex.TryGetValue(key, glue) then
+    begin
+      Link(cur, glue);
+      Exit;
+    end;
+    glue := GlueAt(key, DnToString(level));
+    Link(cur, glue);
+    cur := glue;
+  end;
+  Link(cur, AAncestor);
+end;
+
+procedure TLdifStore.DeclareBase(const ADn: string);
+var
+  d, level: TLdapDn;
+  err, key, k: string;
+  node, anc, child, next: TLdifNode;
+  cd: TLdapDn;
+begin
+  if not DnParse(ADn, d, err) or (DnRdnCount(d) = 0) then Exit;
+  key := DnMatchKey(d);
+  if FIndex.TryGetValue(key, node) then
+  begin
+    node.Pinned := True;
+    Exit;
+  end;
+  node := GlueAt(key, DnToString(d));
+  node.Pinned := True;
+  anc := nil;
+  level := d;
+  k := key;
+  while (anc = nil) and (DnRdnCount(level) > 1) do
+  begin
+    k := Copy(k, Length(RdnMatchKey(level.Rdns[0])) + 2, MaxInt);
+    level := DnParent(level);
+    if not FIndex.TryGetValue(k, anc) then anc := nil;
+  end;
+  if anc <> nil then LinkVia(node, d, anc) else Link(node, FTop);
+  // Les sommets du fichier ranges sous cette base la rejoignent: une seule entree du fichier
+  // sous ou=1A, et elle flottait seule a la racine.
+  child := FTop.FirstChild;
+  while child <> nil do
+  begin
+    next := child.NextSibling;
+    if (child <> node) and (Length(child.Key) > Length(key) + 1) and
+       (Copy(child.Key, Length(child.Key) - Length(key), MaxInt) = ',' + key) and
+       DnParse(child.Dn, cd, err) then
+    begin
+      Unlink(child);
+      LinkVia(child, cd, node);
+    end;
+    child := next;
+  end;
+end;
+
+procedure TLdifStore.AttachSubschema(AEntry: TLdapEntry);
+var
+  d: TLdapDn;
+  err, key: string;
+  node: TLdifNode;
+begin
+  if (AEntry = nil) or not DnParse(AEntry.Dn, d, err) or (DnRdnCount(d) = 0) then
+  begin
+    AEntry.Free;
+    Exit;
+  end;
+  key := DnMatchKey(d);
+  // Une vraie entree du fichier au meme DN garde sa place; le schema compagnon s'efface.
+  if FIndex.ContainsKey(key) then
+  begin
+    AEntry.Free;
+    Exit;
+  end;
+  node := NewNode(key, AEntry.Dn, AEntry, False);
+  node.Hidden := True;
+  FSubschemaDn := AEntry.Dn;
+end;
+
+procedure TLdifStore.MarkActiveDirectory(const ADomainDn: string);
+begin
+  FLooksLikeAd := True;
+  if (FDomainDn = '') and (ADomainDn <> '') then FDomainDn := ADomainDn;
+end;
+
 function TLdifStore.RootCount: Integer;
 begin
   Result := FTop.ChildCount;
@@ -941,6 +1054,7 @@ var
 begin
   node := FindNode(ADn);
   if (node = nil) or node.Glue then Exit(NotFound('modify', ADn, node));
+  if node.Hidden then Exit(WriteError(LDAP_RC_UNWILLING_TO_PERFORM, 'modify', rsLdifSchemaEntry));
   if not CheckAssertion(node, AAssertion, 'modify', Result) then Exit;
   // Copie de travail: tout s'applique ou rien. Un Modify a moitie applique, c'est
   // un annuaire a moitie faux.
@@ -1076,6 +1190,7 @@ var
 begin
   node := FindNode(ADn);
   if (node = nil) or node.Glue then Exit(NotFound('delete', ADn, node));
+  if node.Hidden then Exit(WriteError(LDAP_RC_UNWILLING_TO_PERFORM, 'delete', rsLdifSchemaEntry));
   if not CheckAssertion(node, AAssertion, 'delete', Result) then Exit;
   if node.ChildCount > 0 then
     Exit(WriteError(LDAP_RC_NOT_ALLOWED_ON_NONLEAF, 'delete', rsLdifHasChildren));
@@ -1177,6 +1292,7 @@ var
 begin
   node := FindNode(ADn);
   if (node = nil) or node.Glue then Exit(NotFound('moddn', ADn, node));
+  if node.Hidden then Exit(WriteError(LDAP_RC_UNWILLING_TO_PERFORM, 'moddn', rsLdifSchemaEntry));
   if not DnParse(node.Dn, oldDn, err) then
     Exit(WriteError(LDAP_RC_INVALID_DN_SYNTAX, 'moddn', Format(rsLdifBadDn, [err])));
   if not DnParse(ANewRdn, rdn, err) or (DnRdnCount(rdn) <> 1) then

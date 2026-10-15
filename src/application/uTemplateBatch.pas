@@ -81,12 +81,15 @@ type
     FRows: TObjectList;
     FPolicy: TAdPwdPolicy;
     FUnique: TUniqueScan;
+    FToFile: Boolean;
     FUniqueKnown: Boolean;
     FUniqueFailed: string;
     function GetRow(AIndex: Integer): TBatchRow;
     function GetMapping(AField: Integer): Integer;
     procedure SetMapping(AField, AColumn: Integer);
     function IsSecret(AField: Integer): Boolean;
+    // mot de passe AD vers un fichier LDIF: ni calcule ni attendu, il ne part pas
+    function FileSkips(AField: Integer): Boolean;
     // mot de passe que le lot pose lui-meme: fixe, compose ou tire
     function Computes(AField: Integer): Boolean;
     function FieldRequired(AField: Integer): Boolean;
@@ -122,6 +125,8 @@ type
     property Template: TEntryTemplate read FT;
     // AD: politique du domaine; inconnue, rien n'est juge ici
     property Policy: TAdPwdPolicy read FPolicy write FPolicy;
+    // cible = fichier LDIF
+    property ToFile: Boolean read FToFile write FToFile;
     property Table: TCsvTable read FTable;
     property Rows[AIndex: Integer]: TBatchRow read GetRow; default;
     property Mapping[AField: Integer]: Integer read GetMapping write SetMapping;
@@ -602,9 +607,16 @@ begin
       (not FT.Fields[AField].Optional or (ComposedFrom(FT, AField) <> '')));
 end;
 
+function TTemplateBatch.FileSkips(AField: Integer): Boolean;
+begin
+  Result := FToFile and (FProvider = pkActiveDirectory) and IsSecret(AField) and
+    TemplatePasswordAttr(FT.Fields[AField].Attr, pkActiveDirectory, FSchema);
+end;
+
 function TTemplateBatch.Computes(AField: Integer): Boolean;
 begin
-  Result := IsSecret(AField) and (FT.Fields[AField].Source in [tsFixed, tsCompose, tsRandom]);
+  Result := IsSecret(AField) and (FT.Fields[AField].Source in [tsFixed, tsCompose, tsRandom]) and
+    not FileSkips(AField);
 end;
 
 function TTemplateBatch.HashedNames: string;
@@ -626,7 +638,7 @@ var
 begin
   Result := '';
   for i := 0 to High(FT.Fields) do
-    if IsSecret(i) and not Computes(i) then
+    if IsSecret(i) and not Computes(i) and not FileSkips(i) then
     begin
       if Result <> '' then Result := Result + ', ';
       Result := Result + FT.Fields[i].Attr;

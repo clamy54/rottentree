@@ -1753,11 +1753,14 @@ begin
         if Caption <> '-' then Enabled := hasDn;
       end;
   FTemplatesItem.Enabled := True;
+  // Niveau absent du fichier: rien a lire ni modifier, mais on peut y ranger des entrees. Un
+  // LDIF neuf ne commence pas autrement.
   if hasDn and (FTree.Selected <> nil) and TNodeData(FTree.Selected.Data).LdifGlue then
     for i := 0 to FTreeMenu.Items.Count - 1 do
       with FTreeMenu.Items[i] do
         if (Caption <> '-') and (Caption <> rsDirMenuRefresh) and (Caption <> rsDirMenuCopyDn) and
-           (Caption <> rsDirMenuSearchHere) and (Caption <> rsDirMenuTemplates) then
+           (Caption <> rsDirMenuSearchHere) and (Caption <> rsDirMenuTemplates) and
+           not ((Tag in [MENU_TAG_NEW_CHILD, MENU_TAG_AD_NEW_OBJECT, MENU_TAG_AD_NEW_OU]) and writable) then
           Enabled := False;
 end;
 
@@ -1776,7 +1779,7 @@ begin
   node := FTree.Selected;
   if (node = nil) or (node.Data = nil) or TNodeData(node.Data).IsPlaceholder or
      TNodeData(node.Data).IsGroup then Exit;
-  if node.Parent = nil then Exit(True);
+  if (node.Parent = nil) or TNodeData(node.Data).LdifGlue then Exit(True);
   cls := TNodeData(node.Data).Classes;
   if cls = '' then Exit(True);
   Result := Has(cls, 'organizationalunit') or Has(cls, 'domaindns') or Has(cls, 'domain') or
@@ -1795,7 +1798,7 @@ begin
   if (node = nil) or (node.Data = nil) then Exit;
   d := TNodeData(node.Data);
   if d.IsPlaceholder or d.IsGroup then Exit;
-  Result := (node.Parent = nil) or (d.Classes = '') or d.Container or (node.Count > 0);
+  Result := (node.Parent = nil) or (d.Classes = '') or d.Container or (node.Count > 0) or d.LdifGlue;
 end;
 
 function TDirectoryTab.SelectedMayBeGroup(ADynamic: Boolean): Boolean;

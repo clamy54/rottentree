@@ -119,6 +119,8 @@ type
     AdMustChange, AdNeverExpires, AdDisabled: Boolean;
     // options d'un modele: elles font foi sur les bits fournis, dans un sens comme dans l'autre
     AdAccountOptions: Boolean;
+    // cible = fichier LDIF: pas de mot de passe AD ni d'activation a faire ici
+    ToFile: Boolean;
     constructor Create;
     destructor Destroy; override;
     property Values: TLdapEntry read FValues;
@@ -171,6 +173,8 @@ resourcestring
   rsCpAdOnAdd = '%s is set by Active Directory itself when the entry is created, which refuses it in the ' +
     'request: leave it out.';
   rsCpDisabled = 'The account is created disabled; enable it as a separate step once its password is set.';
+  rsCpDisabledFile = 'The account is written disabled and without a password: a file is no place for one. ' +
+    'Set it and enable the account after the import.';
   rsCpDisabledByChoice = 'The account is created disabled, as the template asks.';
   rsCpUacForcedDisabled = 'userAccountControl keeps the supplied bits but the account is created disabled.';
   rsCpUacInvalid = 'userAccountControl is not an integer.';
@@ -1084,7 +1088,8 @@ begin
       else if ((uac and CREATE_UF_ACCOUNTDISABLE) = 0) and not APlan.AdPasswordInAdd then
         AddIssue(Result, isWarning, 'userAccountControl', rsCpUacForcedDisabled);
     end;
-    if not APlan.AdPasswordInAdd then AddIssue(Result, isWarning, '', rsCpDisabled)
+    if APlan.ToFile then AddIssue(Result, isWarning, '', rsCpDisabledFile)
+    else if not APlan.AdPasswordInAdd then AddIssue(Result, isWarning, '', rsCpDisabled)
     else if APlan.AdDisabled then AddIssue(Result, isWarning, '', rsCpDisabledByChoice);
   end;
 end;
@@ -1153,7 +1158,7 @@ procedure PrepareSteps(APlan: TEntryCreationPlan; const AAnalysis: TClassAnalysi
 begin
   APlan.Steps := nil;
   Add(cskAdd);
-  if IsAdAccount(AAnalysis, APlan.Provider) and not APlan.AdPasswordInAdd then
+  if IsAdAccount(AAnalysis, APlan.Provider) and not APlan.AdPasswordInAdd and not APlan.ToFile then
   begin
     Add(cskSetPassword);
     Add(cskEnable);

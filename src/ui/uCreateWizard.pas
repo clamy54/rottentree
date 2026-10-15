@@ -501,6 +501,7 @@ begin
     FPlan.SessionId := c.SessionId;
     FPlan.Generation := c.Generation;
     FPlan.Provider := EffectiveServerKind(c.Profile, c.RootDse);
+    FPlan.ToFile := c.Profile.LdifPath <> '';
     FPlan.SchemaKey := SchemaIdentity(c.Schema);
     SetTarget(c.Profile.DisplayEndpoint, c.Profile.EnvironmentBadge);
   end;
@@ -712,7 +713,8 @@ begin
   Result := False;
   FJoins := Copy(APrefill.Joins, 0, Length(APrefill.Joins));
   // Avant le nommage: les etapes s'y preparent, et sans etape a part si le mot de passe part avec.
-  FPlan.AdPasswordInAdd := (FPlan.Provider = pkActiveDirectory) and (APrefill.AdPassword <> '');
+  FPlan.AdPasswordInAdd := (FPlan.Provider = pkActiveDirectory) and (APrefill.AdPassword <> '') and
+    not FPlan.ToFile;
   FPlan.AdMustChange := APrefill.AdMustChange;
   FPlan.AdNeverExpires := APrefill.AdNeverExpires;
   FPlan.AdDisabled := APrefill.AdDisabled;
