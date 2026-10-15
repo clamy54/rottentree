@@ -325,8 +325,6 @@ begin
   StackTop(FMapBox);
   FMapBox.Align := alTop;
   FMapBox.Height := MAP_ROWS_SHOWN * MAP_ROW_PITCH;
-  FMapBox.HorzScrollBar.Visible := False;
-  FMapBox.VertScrollBar.Tracking := True;
   FMapBox.Visible := False;
 
   FGroupRow := MakeFieldRow(Body, rsTbGroups);
@@ -389,10 +387,10 @@ var
   title: string;
 begin
   FUpdating := True;
-  FMapBox.DisableAlign;
+  FMapBox.Content.DisableAlign;
   try
-    for i := FMapBox.ControlCount - 1 downto 0 do
-      FMapBox.Controls[i].Free;
+    for i := FMapBox.Content.ControlCount - 1 downto 0 do
+      FMapBox.Content.Controls[i].Free;
     FCombos := nil;
     FComboFields := nil;
     n := 0;
@@ -403,7 +401,7 @@ begin
       if not FBatch.Mappable(i) then Continue;
       title := FieldPrompt(f);
       if not SameText(title, f.Attr) then title := title + '  (' + f.Attr + ')';
-      row := MakeFieldRow(FMapBox, title, 320);
+      row := MakeFieldRow(FMapBox.Content, title, 320);
       row.BorderSpacing.Top := 0;
       row.Height := MAP_ROW_PITCH;
       row.Top := n * MAP_ROW_PITCH;
@@ -423,7 +421,7 @@ begin
       Inc(n);
     end;
   finally
-    FMapBox.EnableAlign;
+    FMapBox.Content.EnableAlign;
     FUpdating := False;
   end;
   ThemeControlTree(FMapBox);
