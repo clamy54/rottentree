@@ -76,6 +76,7 @@ type
     FState: array of TTfState;
     FRows: TFPList;
     FScroll: TRtScrollBox;
+    FRowsBox: TPanel;
     FDnLabel, FStatusLabel: TLabel;
     FStatusIcon: TRtIcon;
     FCreate, FBatchBtn: TButton;
@@ -822,12 +823,9 @@ begin
   FStatusLabel := MakeDataLabel(statusRow, '', alClient);
   FStatusLabel.WordWrap := True;
 
-  FScroll := TRtScrollBox.Create(Body);
-  FScroll.Parent := Body;
-  FScroll.Align := alClient;
+  // un seul enfant qui defile, comme dans l'editeur: GTK3 ne suit pas des rangees en vrac
+  FScroll := MakeScrollArea(Body, FRowsBox);
   FScroll.BorderSpacing.Top := 6;
-  FScroll.HorzScrollBar.Visible := False;
-  FScroll.VertScrollBar.Tracking := True;
 
   FCreate := AddButton(rsTfCreate, mrNone, True);
   FCreate.OnClick := @CreateClick;
@@ -870,7 +868,7 @@ var
   var
     row: TTfRow;
   begin
-    row := TTfRow.CreateRow(FScroll, Self, AKind, AIndex, ATitle);
+    row := TTfRow.CreateRow(FRowsBox, Self, AKind, AIndex, ATitle);
     row.Top := y;
     Inc(y, row.Height);
     FRows.Add(row);
@@ -888,7 +886,7 @@ var
 
 begin
   FUpdating := True;
-  FScroll.DisableAlign;
+  FRowsBox.DisableAlign;
   try
     for i := FRows.Count - 1 downto 0 do
       TObject(FRows[i]).Free;
@@ -911,7 +909,7 @@ begin
         if InSection(i, section) then NewRow(tfkField, i, '');
     end;
   finally
-    FScroll.EnableAlign;
+    FRowsBox.EnableAlign;
     FUpdating := False;
   end;
 end;

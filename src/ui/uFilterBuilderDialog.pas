@@ -103,6 +103,7 @@ type
     FCurrent: TFbRow;
     FMetrics: TFbMetrics;
     FScroll: TRtScrollBox;
+    FRowsBox: TPanel;
     FText: TMemo;
     FTextProblem: string;
     FUpdatingText, FUpdating, FClosing: Boolean;
@@ -1083,11 +1084,8 @@ begin
   FHelp.WordWrap := True;
   FHelpRow := helpRow;
 
-  FScroll := TRtScrollBox.Create(Body);
-  FScroll.Parent := Body;
-  FScroll.Align := alClient;
-  FScroll.HorzScrollBar.Visible := False;
-  FScroll.VertScrollBar.Tracking := True;
+  // un seul enfant qui defile: GTK3 ne suit pas des rangees fenetrees en vrac
+  FScroll := MakeScrollArea(Body, FRowsBox);
   FScroll.OnMouseWheel := @ScrollWheel;
 
   FSuggestBox := TPanel.Create(Self);
@@ -1230,7 +1228,7 @@ var
   function NewRow(AKind: TFbRowKind; ANode, AGroup: TFilterNode; ADepth: Integer;
     const ARails: TFbColors; ANegated: Boolean = False): TFbRow;
   begin
-    Result := TFbRow.CreateRow(FScroll, Self, AKind, ANode, AGroup, ANegated, ADepth, ARails);
+    Result := TFbRow.CreateRow(FRowsBox, Self, AKind, ANode, AGroup, ANegated, ADepth, ARails);
     Result.Top := y;
     Inc(y, Result.Height);
     FRows.Add(Result);
@@ -1301,7 +1299,7 @@ begin
   FSuggestFor := nil;
   FMenuRow := nil;
   FUpdating := True;
-  FScroll.DisableAlign;
+  FRowsBox.DisableAlign;
   try
     for i := FRows.Count - 1 downto 0 do
       TObject(FRows[i]).Free;
@@ -1318,7 +1316,7 @@ begin
         NewRow(frkAdd, nil, nil, 0, nil);
     end;
   finally
-    FScroll.EnableAlign;
+    FRowsBox.EnableAlign;
     FUpdating := False;
   end;
   if (pick = nil) and (NodeRowCount > 0) then

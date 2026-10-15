@@ -107,6 +107,7 @@ type
     FFillingAccount: Boolean;
     FClasses, FGroupBar: TRtChipBar;
     FScroll: TRtScrollBox;
+    FRowsBox: TPanel;
     FStatus, FWords, FHelp: TLabel;
     FStatusIcon, FHelpIcon: TRtIcon;
     FHelpRow: TPanel;
@@ -1579,11 +1580,9 @@ begin
   FHelp.WordWrap := True;
   FHelpRow := row;
 
-  FScroll := TRtScrollBox.Create(Body);
-  FScroll.Parent := Body;
-  FScroll.Align := alClient;
-  FScroll.HorzScrollBar.Visible := False;
-  FScroll.VertScrollBar.Tracking := True;
+  // Un seul enfant qui defile: des dizaines de rangees fenetrees posees a meme la boite, GTK3
+  // les replace de travers et peint du noir a la place.
+  FScroll := MakeScrollArea(Body, FRowsBox);
 
   FMenu := TPopupMenu.Create(Self);
 
@@ -1875,7 +1874,7 @@ var
   var
     row: TTeRow;
   begin
-    row := TTeRow.CreateRow(FScroll, Self, AKind, AIndex);
+    row := TTeRow.CreateRow(FRowsBox, Self, AKind, AIndex);
     row.Top := y;
     Inc(y, row.Height);
     FRows.Add(row);
@@ -1886,7 +1885,7 @@ begin
   pos := FScroll.VertScrollBar.Position;
   FIssues := AllIssues;
   FUpdating := True;
-  FScroll.DisableAlign;
+  FRowsBox.DisableAlign;
   try
     for i := FRows.Count - 1 downto 0 do
       TObject(FRows[i]).Free;
@@ -1901,7 +1900,7 @@ begin
       NewRow(trkAdd, -1);
     end;
   finally
-    FScroll.EnableAlign;
+    FRowsBox.EnableAlign;
     FUpdating := False;
   end;
   FScroll.VertScrollBar.Position := pos;
