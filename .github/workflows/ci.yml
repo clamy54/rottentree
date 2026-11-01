@@ -54,9 +54,9 @@ jobs:
         run: bash scripts/build.sh --release
 
   build-macos:
-    # arm64. macos-14 = Xcode 15.4; son ld moderne casse sur les sections objc
-    # de FPC, le .lpi force -ld_classic.
-    runs-on: macos-14
+    # arm64. macos-15 = Xcode 16; son ld moderne casse sur les sections objc
+    # de FPC, le .lpi force -ld_classic. Le jour ou Apple le retire, on pleure.
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
