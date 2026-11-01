@@ -42,7 +42,7 @@
     <VersionInfo>
       <UseVersionInfo Value="True"/>
       <MajorVersionNr Value="2"/>
-      <MinorVersionNr Value="1"/>
+      <MinorVersionNr Value="2"/>
       <StringTable CompanyName="Cyril LAMY" FileDescription="Rottentree LDAP client" LegalCopyright="GPL-3.0-or-later" ProductName="Rottentree"/>
     </VersionInfo>
     <BuildModes>

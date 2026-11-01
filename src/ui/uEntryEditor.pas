@@ -115,6 +115,8 @@ resourcestring
   rsDirRereadEditsKept = 'Write applied to %s; the attributes were edited meanwhile, so the view was not replaced. Refresh the entry to see the server state.';
   rsDirRereadFailed = '%s';
   rsDirOpenValue = 'Open value...';
+  rsDirCopyValue = 'Copy value to clipboard';
+  rsDirCopyShown = 'Copy displayed text to clipboard';
   rsDirGoToDn = 'Go to %s';
   rsDirLoadValue = 'Load value from file...';
   rsDirSaveValue = 'Save value to file...';
@@ -208,6 +210,7 @@ type
     FFilePath: string;
     FMenuRow: Integer;
     FMenuDn: string;
+    FMenuShown: string;
     FOnNavigate: TDnNotify;
     function ResolutionFor(const AAttr: string): TValueResolution;
     function ViewOf(const ARes: TValueResolution; const AAttr: string;
@@ -221,6 +224,8 @@ type
     procedure HandleFileMsg(AMsg: TValueFileMsg);
     procedure CancelFileTask;
     procedure MenuOpenClick(Sender: TObject);
+    procedure MenuCopyClick(Sender: TObject);
+    procedure MenuCopyShownClick(Sender: TObject);
     procedure MenuLoadClick(Sender: TObject);
     procedure MenuSaveClick(Sender: TObject);
     procedure MenuCertClick(Sender: TObject);
@@ -324,7 +329,7 @@ type
 implementation
 
 uses
-  uTheme, uUiKit, uLdapSchema, uLdif, uRtBytes, uLdapFilter, uSensitive,
+  Clipbrd, uTheme, uUiKit, uLdapSchema, uLdif, uRtBytes, uLdapFilter, uSensitive,
   uChangePreview, uDirectoryService, uRtMessage, uSearchModel, uMenuBar, uSyntaxInfo, uServerKind, uRtButton,
   uValueDialog, uLocalTime, uPasswordWork, uAttributeChoice, uPickDialog, uTaskDialog;
 
@@ -956,6 +961,7 @@ var
   attr: string;
   canUnique, canNext, hasValue: Boolean;
   res: TValueResolution;
+  view: TAttributeValueView;
 
   procedure AddItem(const ACaption: string; AOnClick: TNotifyEvent; AEnabled: Boolean);
   var
@@ -999,8 +1005,20 @@ begin
   if canUnique then FIdMenuValue := FEdited.Attrs[ai].Values[vi] else FIdMenuValue := '';
   if FIdMenu = nil then FIdMenu := TPopupMenu.Create(Self);
   FIdMenu.Items.Clear;
+  FMenuShown := '';
   if hasValue then
+  begin
     AddItem(rsDirOpenValue, @MenuOpenClick, True);
+    // Valeur brute grisee sur du binaire: le presse-papiers texte en ferait de la bouillie.
+    // Quand l'affichage differe (date reformatee, SID decode), il se copie a part.
+    AddItem(rsDirCopyValue, @MenuCopyClick, IsValidUtf8(FEdited.Attrs[ai].Values[vi]));
+    view := ViewOf(res, attr, FEdited.Attrs[ai].Values[vi]);
+    if (view.Display <> '') and (view.Display <> string(FEdited.Attrs[ai].Values[vi])) then
+    begin
+      FMenuShown := view.Display;
+      AddItem(rsDirCopyShown, @MenuCopyShownClick, True);
+    end;
+  end;
   // DN analyse, jamais decoupe a la virgule: les virgules echappees existent, et elles mordent.
   FMenuDn := '';
   if hasValue and (res.Kind = vkDn) and Assigned(FOnNavigate) and
@@ -1033,6 +1051,22 @@ end;
 procedure TEntryEditor.MenuOpenClick(Sender: TObject);
 begin
   OpenValueDialog(FMenuRow);
+end;
+
+procedure TEntryEditor.MenuCopyClick(Sender: TObject);
+var
+  ai, vi: Integer;
+begin
+  if FEdited = nil then Exit;
+  GetRowRef(FMenuRow, ai, vi);
+  if (ai < 0) or (ai >= FEdited.AttrCount) then Exit;
+  if (vi < 0) or (vi >= FEdited.Attrs[ai].ValueCount) then Exit;
+  Clipboard.AsText := string(FEdited.Attrs[ai].Values[vi]);
+end;
+
+procedure TEntryEditor.MenuCopyShownClick(Sender: TObject);
+begin
+  if FMenuShown <> '' then Clipboard.AsText := FMenuShown;
 end;
 
 procedure TEntryEditor.MenuLoadClick(Sender: TObject);
