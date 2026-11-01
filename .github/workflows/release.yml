@@ -132,10 +132,17 @@ jobs:
         run: |
           brew install openssl@3 libsodium sqlite argon2
           brew tap-new --no-git local/rt
-          f="$(brew --repository local/rt)/Formula/openldap.rb"
-          curl -fsSL https://raw.githubusercontent.com/Homebrew/homebrew-core/HEAD/Formula/o/openldap.rb \
-            | sed 's/openssl@4/openssl@3/g' > "$f"
-          grep -q 'openssl@3' "$f" || { echo "formule openldap sans openssl: a revoir" >&2; exit 1; }
+          tap="$(brew --repository local/rt)"
+          core=https://raw.githubusercontent.com/Homebrew/homebrew-core/HEAD
+          curl -fsSL "$core/Formula/o/openldap.rb" | sed 's/openssl@4/openssl@3/g' \
+            > "$tap/Formula/openldap.rb"
+          grep -q 'openssl@3' "$tap/Formula/openldap.rb" ||
+            { echo "formule openldap sans openssl: a revoir" >&2; exit 1; }
+          # correctifs ranges dans homebrew-core, references par chemin relatif au tap
+          for p in $(grep -o '"Patches/[^"]*"' "$tap/Formula/openldap.rb" | tr -d '"'); do
+            mkdir -p "$tap/$(dirname "$p")"
+            curl -fsSL "$core/$p" > "$tap/$p"
+          done
           brew install --build-from-source local/rt/openldap
           otool -L "$(brew --prefix openldap)/lib/libldap.2.dylib"
       - name: Python et Pillow (icone .icns)
