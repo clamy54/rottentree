@@ -124,8 +124,20 @@ jobs:
         run: bash .github/install-lazarus-macos.sh
       - name: Bibliotheques natives
         # package-macos.sh les embarque dans Contents/Frameworks et echoue si
-        # une seule garde une reference vers /opt/homebrew
-        run: brew install openldap openssl@3 libsodium sqlite argon2
+        # une seule garde une reference vers /opt/homebrew.
+        # La bouteille openldap de Homebrew est passee a openssl@4; l'application
+        # inspecte la session TLS de libldap avec ses propres appels OpenSSL 3.
+        # Deux OpenSSL dans le meme processus, c'est un crash qui attend son heure:
+        # openldap est recompile ici contre openssl@3.
+        run: |
+          brew install openssl@3 libsodium sqlite argon2
+          brew tap-new --no-git local/rt
+          f="$(brew --repository local/rt)/Formula/openldap.rb"
+          curl -fsSL https://raw.githubusercontent.com/Homebrew/homebrew-core/HEAD/Formula/o/openldap.rb \
+            | sed 's/openssl@4/openssl@3/g' > "$f"
+          grep -q 'openssl@3' "$f" || { echo "formule openldap sans openssl: a revoir" >&2; exit 1; }
+          brew install --build-from-source local/rt/openldap
+          otool -L "$(brew --prefix openldap)/lib/libldap.2.dylib"
       - name: Python et Pillow (icone .icns)
         uses: actions/setup-python@v5
         with:

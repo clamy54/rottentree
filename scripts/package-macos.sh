@@ -5,7 +5,9 @@
 # produit une archive zip.
 #
 # Les bibliotheques viennent de Homebrew (brew install openldap openssl@3
-# libsodium sqlite argon2): leurs chemins /opt/homebrew sont reecrits en
+# libsodium sqlite argon2). openldap doit etre lie a openssl@3, pas a la
+# bouteille actuelle en openssl@4: voir l'etape "Bibliotheques natives" de
+# .github/workflows/release.yml. Leurs chemins /opt/homebrew sont reecrits en
 # @loader_path pour que le paquet ne depende plus de Homebrew. libsasl2, libz
 # et libresolv restent celles du systeme. Le paquet herite du systeme minimal
 # des bouteilles Homebrew (LSMinimumSystemVersion calcule ci-dessous).
