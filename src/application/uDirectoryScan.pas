@@ -19,8 +19,10 @@ type
     FWorker: TDirectoryWorker;
     // Une seule base incomplete et tout le bilan est partiel: on ne fait pas de moyenne avec
     // la verite. Le premier defaut rencontre est garde.
+    // AAssembleRanges: les plages member;range=... d'AD recollees, sans quoi un groupe de
+    // deux mille membres en compte mille cinq cents.
     function ScanAll(const AFilter: string; const AAttrs: array of string;
-      AOnEntry: TSearchEntryEvent): TSearchCompletion;
+      AOnEntry: TSearchEntryEvent; AAssembleRanges: Boolean = False): TSearchCompletion;
   public
     Bases: TStringArray;
     PageSize: Integer;
@@ -31,17 +33,22 @@ type
 function AccountClassTerms(ASchema: TSchemaSnapshot): string;
 // Valeur montrable dans une liste; vide si ce n'est pas du texte.
 function ScanText(const AValue: RawByteString): string;
-// Cle de comparaison d'un DN: types en minuscules, echappements normalises, AVA d'un RDN
-// multivalue ranges. "cn=Jean\, D" et "cn=Jean\2c D" donnent la meme cle. La casse ASCII des
+// Cle de comparaison d'un DN: types en minuscules (OID courants ramenes a leur nom),
+// echappements normalises, AVA d'un RDN
+// multivalue ranges. "cn=Jean\, D" et "cn=Jean\2c D" donnent la meme cle. La casse des
 // valeurs est pliee: les attributs de nommage usuels sont caseIgnore, un schema caseExact
 // exotique y perd un doublon d'affichage, pas une entree. Un DN imparsable ne s'egale qu'a
 // lui-meme, au byte pres.
 function ScanDnKey(const ADn: string): string;
+// DN a envoyer au serveur: types ramenes a leur nom, echappements normalises, valeurs
+// intactes, casse comprise. Deux ecritures d'une meme entree, une seule lecture; deux valeurs
+// qui different par la casse restent deux lectures. Imparsable: rendu tel quel.
+function ScanDnText(const ADn: string): string;
 
 implementation
 
 uses
-  uRtBytes, uLdapDn;
+  uRtBytes, uLdapDn, uSortKey;
 
 const
   ACCOUNT_CLASSES: array[0..6] of string = ('person', 'organizationalPerson', 'inetOrgPerson',
@@ -67,6 +74,65 @@ begin
     Result := '';
 end;
 
+// Types de RDN ecrits en OID ramenes a leur nom: "2.5.4.3=Alice" et "cn=Alice" sont la meme
+// entree. Liste courte, celle des types qu'on croise vraiment dans un DN.
+function RdnTypeKey(const AType: string): string;
+begin
+  Result := LowerCase(AType);
+  if Copy(Result, 1, 4) = 'oid.' then Delete(Result, 1, 4);
+  if Result = '2.5.4.3' then Result := 'cn'
+  else if Result = '2.5.4.4' then Result := 'sn'
+  else if Result = '2.5.4.6' then Result := 'c'
+  else if Result = '2.5.4.7' then Result := 'l'
+  else if Result = '2.5.4.8' then Result := 'st'
+  else if Result = '2.5.4.10' then Result := 'o'
+  else if Result = '2.5.4.11' then Result := 'ou'
+  else if Result = '2.5.4.42' then Result := 'givenname'
+  else if Result = '0.9.2342.19200300.100.1.1' then Result := 'uid'
+  else if Result = '0.9.2342.19200300.100.1.25' then Result := 'dc'
+  else if Result = '1.2.840.113549.1.9.1' then Result := 'emailaddress';
+end;
+
+function ScanDnText(const ADn: string): string;
+var
+  dn: TLdapDn;
+  i, j: Integer;
+begin
+  if not DnTryParse(ADn, dn) then Exit(ADn);
+  for i := 0 to High(dn.Rdns) do
+    for j := 0 to High(dn.Rdns[i].Avas) do
+      dn.Rdns[i].Avas[j].AttrType := RdnTypeKey(dn.Rdns[i].Avas[j].AttrType);
+  Result := DnToString(dn);
+end;
+
+// Espaces de tete et de fin retires, suites ramenees a un seul: "Jean  Dupont" et "Jean Dupont"
+// sont egaux pour caseIgnoreMatch (RFC 4518), et pour nous.
+function SpacesKey(const S: string): string;
+var
+  i, p: Integer;
+  pending: Boolean;
+begin
+  Result := '';
+  SetLength(Result, Length(S));
+  p := 0;
+  pending := False;
+  for i := 1 to Length(S) do
+    if S[i] = ' ' then
+      pending := p > 0
+    else
+    begin
+      if pending then
+      begin
+        Inc(p);
+        Result[p] := ' ';
+        pending := False;
+      end;
+      Inc(p);
+      Result[p] := S[i];
+    end;
+  SetLength(Result, p);
+end;
+
 function ScanDnKey(const ADn: string): string;
 var
   dn: TLdapDn;
@@ -84,9 +150,9 @@ begin
     for j := 0 to High(dn.Rdns[i].Avas) do
       with dn.Rdns[i].Avas[j] do
         if HexForm then
-          parts[j] := LowerCase(AttrType) + '=#' + LowerCase(HexEncode(Value))
+          parts[j] := RdnTypeKey(AttrType) + '=#' + LowerCase(HexEncode(Value))
         else
-          parts[j] := LowerCase(AttrType) + '=' + DnEscapeValue(LowerCase(Value));
+          parts[j] := RdnTypeKey(AttrType) + '=' + DnEscapeValue(SpacesKey(FoldCase(Value)));
     for j := 1 to High(parts) do
     begin
       tmp := parts[j];
@@ -110,7 +176,7 @@ begin
 end;
 
 function TDirectoryScanCmd.ScanAll(const AFilter: string; const AAttrs: array of string;
-  AOnEntry: TSearchEntryEvent): TSearchCompletion;
+  AOnEntry: TSearchEntryEvent; AAssembleRanges: Boolean): TSearchCompletion;
 var
   req: TSearchRequest;
   c: TSearchCompletion;
@@ -130,7 +196,7 @@ begin
     SetLength(req.Attributes, Length(AAttrs));
     for k := 0 to High(AAttrs) do
       req.Attributes[k] := AAttrs[k];
-    FWorker.Session.Search(req, AOnEntry, Cancel, c, False);
+    FWorker.Session.Search(req, AOnEntry, Cancel, c, AAssembleRanges);
     Result.HasResult := Result.HasResult and c.HasResult;
     Inc(Result.EntryCount, c.EntryCount);
     Inc(Result.PageCount, c.PageCount);

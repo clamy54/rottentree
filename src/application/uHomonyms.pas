@@ -87,44 +87,10 @@ function HomonymGroups(var ARows: THomonymRows; ACount: Integer;
 implementation
 
 uses
-  uUiInbox;
+  uUiInbox, uSortKey;
 
 const
   PROGRESS_ENTRIES = 1000;
-
-// Lettres latines accentuees ramenees a leur base, pour U+00C0 a U+017F. Vide: pas une lettre
-// de ces blocs, a garder telle quelle.
-function LatinBase(ACode: Cardinal): string;
-begin
-  case ACode of
-    $C0..$C5, $E0..$E5, $100..$105: Result := 'a';
-    $C6, $E6: Result := 'ae';
-    $C7, $E7, $106..$10D: Result := 'c';
-    $D0, $F0, $10E..$111: Result := 'd';
-    $C8..$CB, $E8..$EB, $112..$11B: Result := 'e';
-    $11C..$123: Result := 'g';
-    $124..$127: Result := 'h';
-    $CC..$CF, $EC..$EF, $128..$131: Result := 'i';
-    $132, $133: Result := 'ij';
-    $134, $135: Result := 'j';
-    $136..$138: Result := 'k';
-    $139..$142: Result := 'l';
-    $D1, $F1, $143..$14B: Result := 'n';
-    $D2..$D6, $D8, $F2..$F6, $F8, $14C..$151: Result := 'o';
-    $152, $153: Result := 'oe';
-    $154..$159: Result := 'r';
-    $DF: Result := 'ss';
-    $15A..$161, $17F: Result := 's';
-    $DE, $FE: Result := 'th';
-    $162..$167: Result := 't';
-    $D9..$DC, $F9..$FC, $168..$173: Result := 'u';
-    $174, $175: Result := 'w';
-    $DD, $FD, $FF, $176..$178: Result := 'y';
-    $179..$17E: Result := 'z';
-  else
-    Result := '';
-  end;
-end;
 
 function FoldName(const AName: string): string;
 var

@@ -18,6 +18,7 @@ uses
 
 resourcestring
   rsDirLoading = 'Loading...';
+  rsDirLoadingCount = 'Loading... %d entries';
   rsDirMore = 'Partial list: %s';
   rsDirRange = '[%d..%d]';
   rsDirPartialClientLimit = 'Partial list: stopped at %d entries (interactive size limit, profile Limits tab)';
@@ -131,6 +132,7 @@ type
     Container: Boolean;
     Glue: Boolean;
   end;
+  TTreeChildInfos = array of TTreeChildInfo;
 
   TNodeData = class
   public
@@ -145,7 +147,7 @@ type
     ExpandRequested: Boolean;
     IsGroup: Boolean;
     First, Last: Integer;
-    Children: array of TTreeChildInfo;
+    Children: TTreeChildInfos;
     ChildCount: Integer;
     Rendered: Integer;
     Folded: Boolean;
@@ -373,7 +375,7 @@ uses
   uTheme, uIcons, uSensitive, uLdapFilter, uDirectoryService,
   uServerKind, uTransferDialog, uMembershipDialog, uDynamicGroupDialog, uAccountDialog, uAdToolsDialog, uRtMessage, uCreateWizard, uTemplateDeploy, uTemplateManager, uAdSecurityDialogs,
   uMenuBar, uAdCreateDialogs, uAdProtection, uGroupModel, uTaskDialog, uLdifExportDialog,
-  uEntryPickDialog;
+  uEntryPickDialog, uSortKey;
 
 const
   CONFIG_ROOT_TAG = 'configroot:';
@@ -1207,6 +1209,26 @@ begin
     end;
 end;
 
+procedure SortChildren(AData: TNodeData);
+var
+  keys: TStringArray;
+  order: TIndexArray;
+  sorted: TTreeChildInfos;
+  k: Integer;
+begin
+  if AData.ChildCount < 2 then Exit;
+  keys := nil;
+  SetLength(keys, AData.ChildCount);
+  for k := 0 to AData.ChildCount - 1 do
+    keys[k] := SortKey(AData.Children[k].Caption);
+  order := KeyOrder(keys);
+  sorted := nil;
+  SetLength(sorted, AData.ChildCount);
+  for k := 0 to High(order) do
+    sorted[k] := AData.Children[order[k]];
+  AData.Children := sorted;
+end;
+
 procedure TDirectoryTab.AddChildren(AMsg: TEntriesMsg);
 var
   node, child, ph: TTreeNode;
@@ -1261,8 +1283,16 @@ begin
       end;
       Inc(data.ChildCount);
     end;
+    // Rien ne s'affiche avant la derniere page: l'ordre n'existe qu'une fois tout recu, et une
+    // entree qui saute de ligne sous le curseur, c'est un clic sur le mauvais compte.
+    if not AMsg.Final then
+    begin
+      if ph <> nil then ph.Text := Format(rsDirLoadingCount, [data.ChildCount]);
+      Exit;
+    end;
+    SortChildren(data);
     RenderChildren(node);
-    if (ph <> nil) and ((node.Count > 1) or AMsg.Final) then
+    if ph <> nil then
     begin
       BeginTreeChange;
       try
@@ -1271,28 +1301,25 @@ begin
         EndTreeChange;
       end;
     end;
-    if AMsg.Final then
+    data.Loading := False;
+    data.Loaded := True;
+    if SearchOutcome(AMsg.Completion) <> soComplete then
     begin
-      data.Loading := False;
-      data.Loaded := True;
-      if SearchOutcome(AMsg.Completion) <> soComplete then
-      begin
-        // Une page manquante n'est pas un annuaire vide; on dit pourquoi.
-        cd := TNodeData.Create;
-        cd.IsPlaceholder := True;
-        child := FTree.Items.AddChildObject(node, PartialListText(AMsg, data.ChildCount), cd);
-        child.ImageIndex := IconIndex('alert-triangle');
-        child.SelectedIndex := child.ImageIndex;
-      end;
-      node.HasChildren := node.Count > 0;
-      if (node.Count > 0) and (node.ImageIndex = IconIndex('file')) then
-        SetNodeIcon(node, 'folder');
-      if data.ExpandRequested and (node.Count > 0) and not node.Expanded then
-        node.Expand(False);
-      data.ExpandRequested := False;
-      if FPendingSelectDn <> '' then
-        NavigateTo(FPendingSelectDn);
+      // Une page manquante n'est pas un annuaire vide; on dit pourquoi.
+      cd := TNodeData.Create;
+      cd.IsPlaceholder := True;
+      child := FTree.Items.AddChildObject(node, PartialListText(AMsg, data.ChildCount), cd);
+      child.ImageIndex := IconIndex('alert-triangle');
+      child.SelectedIndex := child.ImageIndex;
     end;
+    node.HasChildren := node.Count > 0;
+    if (node.Count > 0) and (node.ImageIndex = IconIndex('file')) then
+      SetNodeIcon(node, 'folder');
+    if data.ExpandRequested and (node.Count > 0) and not node.Expanded then
+      node.Expand(False);
+    data.ExpandRequested := False;
+    if FPendingSelectDn <> '' then
+      NavigateTo(FPendingSelectDn);
   finally
     FTree.Items.EndUpdate;
   end;

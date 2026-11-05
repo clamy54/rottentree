@@ -51,7 +51,7 @@ type
     FMiNewProfile, FMiEditProfile, FMiConnect, FMiDisconnect: TMenuItem;
     FLdifPaths, FLdifUuids: TStringList;
     FMiSaveLdif, FMiSaveLdifAs, FMiLdifSchemaFiles, FMiLdifSchemaFrom: TMenuItem;
-    FMiPasswordAudit, FMiDuplicateId, FMiHomonyms: TMenuItem;
+    FMiPasswordAudit, FMiDuplicateId, FMiHomonyms, FMiGroupMembers: TMenuItem;
     FLdifSaveTask: Int64;
     FLdifSaveDone, FLdifSaveOk: Boolean;
     procedure BuildMenu;
@@ -161,6 +161,7 @@ type
     procedure PasswordAuditClick(Sender: TObject);
     procedure DuplicateIdClick(Sender: TObject);
     procedure HomonymsClick(Sender: TObject);
+    procedure GroupMembersClick(Sender: TObject);
     function ScanConnection(AAllowAd: Boolean): TDirectoryConnection;
     procedure OpenScanTab(AClass: TScanTabClass; AConn: TDirectoryConnection);
     procedure PreferencesClick(Sender: TObject);
@@ -185,7 +186,7 @@ uses
   uDocumentCrypto, uSessionModel, uLdapErrors, uVersion, uCancel,
   uSearchTab, uLdifTab, uNewLdifDialog, uLdifMeta, uPasswordDialog, uCertDialog, uSchemaDialog, uToolsDialogs, uTemplateManager,
   uAboutDialog, uCompareTab, uRtBytes, uExportActions, uLdifExportDialog, uPasswordWork, uConnectFlow, uEntryTab,
-  uDirectoryService, uMonitorTab, uPasswordAuditTab, uDuplicateIdTab, uHomonymTab,
+  uDirectoryService, uMonitorTab, uPasswordAuditTab, uDuplicateIdTab, uHomonymTab, uGroupMemberTab,
   uAdToolsDialog,
   uProfileExchangeDialog,
   uServerKind,
@@ -426,6 +427,7 @@ begin
   FMiPasswordAudit := AddItem(m, rsMenuPasswordAudit, 0, @PasswordAuditClick);
   FMiDuplicateId := AddItem(m, rsMenuDuplicateId, 0, @DuplicateIdClick);
   FMiHomonyms := AddItem(m, rsMenuHomonyms, 0, @HomonymsClick);
+  FMiGroupMembers := AddItem(m, rsMenuGroupMembers, 0, @GroupMembersClick);
 
   m := Root(rsMenuHelp);
   AddItem(m, rsMenuLicenses, 0, @LicensesClick);
@@ -893,6 +895,7 @@ begin
   FMiPasswordAudit.Enabled := ScanConnection(False) <> nil;
   FMiDuplicateId.Enabled := ScanConnection(True) <> nil;
   FMiHomonyms.Enabled := FMiDuplicateId.Enabled;
+  FMiGroupMembers.Enabled := FMiDuplicateId.Enabled;
 end;
 
 function TMainForm.ScanConnection(AAllowAd: Boolean): TDirectoryConnection;
@@ -941,6 +944,11 @@ end;
 procedure TMainForm.HomonymsClick(Sender: TObject);
 begin
   OpenScanTab(THomonymTab, ScanConnection(True));
+end;
+
+procedure TMainForm.GroupMembersClick(Sender: TObject);
+begin
+  OpenScanTab(TGroupMemberTab, ScanConnection(True));
 end;
 
 procedure TMainForm.LdifModified(Sender: TObject);

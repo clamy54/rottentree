@@ -65,6 +65,7 @@ resourcestring
   rsMenuPasswordAudit = 'Weak Password Storage';
   rsMenuDuplicateId = 'Duplicate Identifiers';
   rsMenuHomonyms = 'Homonyms';
+  rsMenuGroupMembers = 'Group Members';
   rsMenuExportProfiles = 'Export Profiles...';
   rsMenuImportProfiles = 'Import Profiles...';
   rsMenuMonitor = 'Server Monitor';

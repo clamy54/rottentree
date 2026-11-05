@@ -61,6 +61,8 @@ type
     function SummaryText: string; virtual; abstract;
     // Ce que l'outil n'a pas pu lire, quand ca change la portee du resultat. Vide: rien.
     function CoverageWarning: string; virtual;
+    // Non vide: il manque un reglage, rien n'est lance et l'onglet reste au repos.
+    function NotReady: string; virtual;
     function ExportCount: Int64; virtual; abstract;
     // En-tete compris; rend le nombre de lignes.
     function ExportRows(ACsv: TCsvWriter): Int64; virtual; abstract;
@@ -189,6 +191,11 @@ begin
   Result := '';
 end;
 
+function TScanTab.NotReady: string;
+begin
+  Result := '';
+end;
+
 procedure TScanTab.BuildUi;
 begin
   FView := TRtReportView.Create(Self);
@@ -254,6 +261,12 @@ begin
   FFailure := '';
   ResetResults;
   ListChanged;
+  if NotReady <> '' then
+  begin
+    FState := scsIdle;
+    UpdateView;
+    Exit;
+  end;
   c := FTasks.Conn;
   if c = nil then
   begin

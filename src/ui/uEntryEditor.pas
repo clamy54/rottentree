@@ -117,6 +117,7 @@ resourcestring
   rsDirOpenValue = 'Open value...';
   rsDirCopyValue = 'Copy value to clipboard';
   rsDirCopyShown = 'Copy displayed text to clipboard';
+  rsDirCopyAttrName = 'Copy attribute name to clipboard';
   rsDirGoToDn = 'Go to %s';
   rsDirLoadValue = 'Load value from file...';
   rsDirSaveValue = 'Save value to file...';
@@ -211,6 +212,7 @@ type
     FMenuRow: Integer;
     FMenuDn: string;
     FMenuShown: string;
+    FMenuAttrName: string;
     FOnNavigate: TDnNotify;
     function ResolutionFor(const AAttr: string): TValueResolution;
     function ViewOf(const ARes: TValueResolution; const AAttr: string;
@@ -226,6 +228,7 @@ type
     procedure MenuOpenClick(Sender: TObject);
     procedure MenuCopyClick(Sender: TObject);
     procedure MenuCopyShownClick(Sender: TObject);
+    procedure MenuCopyNameClick(Sender: TObject);
     procedure MenuLoadClick(Sender: TObject);
     procedure MenuSaveClick(Sender: TObject);
     procedure MenuCertClick(Sender: TObject);
@@ -329,7 +332,7 @@ type
 implementation
 
 uses
-  Clipbrd, uTheme, uUiKit, uLdapSchema, uLdif, uRtBytes, uLdapFilter, uSensitive,
+  Clipbrd, uSortKey, uTheme, uUiKit, uLdapSchema, uLdif, uRtBytes, uLdapFilter, uSensitive,
   uChangePreview, uDirectoryService, uRtMessage, uSearchModel, uMenuBar, uSyntaxInfo, uServerKind, uRtButton,
   uValueDialog, uLocalTime, uPasswordWork, uAttributeChoice, uPickDialog, uTaskDialog;
 
@@ -959,7 +962,7 @@ var
   col, row, ai, vi: Integer;
   kind: TProviderKind;
   attr: string;
-  canUnique, canNext, hasValue: Boolean;
+  canUnique, canNext, hasValue, onName: Boolean;
   res: TValueResolution;
   view: TAttributeValueView;
 
@@ -974,25 +977,43 @@ var
     FIdMenu.Items.Add(item);
   end;
 
+  procedure ShowMenu;
+  begin
+    if Assigned(EntryMenuPopupOverride) then
+    begin
+      EntryMenuPopupOverride(FIdMenu, Mouse.CursorPos.X, Mouse.CursorPos.Y);
+      Exit;
+    end;
+    ThemePopupMenu(FIdMenu);
+    FIdMenu.PopUp(Mouse.CursorPos.X, Mouse.CursorPos.Y);
+  end;
+
 begin
   if (Button <> mbRight) or (FEdited = nil) then Exit;
   FGrid.MouseToCell(X, Y, col, row);
   if row < 1 then Exit;
   GetRowRef(row, ai, vi);
   if (ai < 0) or (ai >= FEdited.AttrCount) then Exit;
+  attr := FEdited.Attrs[ai].Description;
+  onName := col = 0;
+  FMenuAttrName := attr;
+  if FIdMenu = nil then FIdMenu := TPopupMenu.Create(Self);
   // Clic droit sur un secret: affiche ou masque, a l'ecran seulement. Ni LDIF, ni journal,
-  // ni fichier: un secret revele n'a pas a faire de tourisme.
-  if FCtx.Sensitive.IsSensitive(FEdited.Attrs[ai].Description) then
+  // ni fichier: un secret revele n'a pas a faire de tourisme. Son nom, lui, n'a rien de secret.
+  if FCtx.Sensitive.IsSensitive(attr) then
   begin
-    if FEdited.Attrs[ai].ValueCount > 0 then
+    FGrid.Row := row;
+    if onName then
     begin
-      FGrid.Row := row;
-      ToggleReveal(FEdited.Attrs[ai].Description);
-    end;
+      FIdMenu.Items.Clear;
+      AddItem(rsDirCopyAttrName, @MenuCopyNameClick, True);
+      ShowMenu;
+    end
+    else if FEdited.Attrs[ai].ValueCount > 0 then
+      ToggleReveal(attr);
     Exit;
   end;
   kind := ServerKind;
-  attr := FEdited.Attrs[ai].Description;
   res := ResolutionFor(attr);
   hasValue := (vi >= 0) and (vi < FEdited.Attrs[ai].ValueCount);
   canUnique := hasValue and (FEdited.Attrs[ai].Values[vi] <> '') and
@@ -1003,12 +1024,14 @@ begin
   FMenuRow := row;
   FIdMenuAttr := attr;
   if canUnique then FIdMenuValue := FEdited.Attrs[ai].Values[vi] else FIdMenuValue := '';
-  if FIdMenu = nil then FIdMenu := TPopupMenu.Create(Self);
   FIdMenu.Items.Clear;
   FMenuShown := '';
   if hasValue then
-  begin
     AddItem(rsDirOpenValue, @MenuOpenClick, True);
+  if onName then
+    AddItem(rsDirCopyAttrName, @MenuCopyNameClick, True)
+  else if hasValue then
+  begin
     // Valeur brute grisee sur du binaire: le presse-papiers texte en ferait de la bouillie.
     // Quand l'affichage differe (date reformatee, SID decode), il se copie a part.
     AddItem(rsDirCopyValue, @MenuCopyClick, IsValidUtf8(FEdited.Attrs[ai].Values[vi]));
@@ -1039,13 +1062,7 @@ begin
   if canNext then
     AddItem(Format(rsDirNextIdMenu, [attr]), @NextIdClick, FLookupTask = 0);
   if FMenuEdit <> nil then AddEditCommands(FIdMenu, FMenuEdit);
-  if Assigned(EntryMenuPopupOverride) then
-  begin
-    EntryMenuPopupOverride(FIdMenu, Mouse.CursorPos.X, Mouse.CursorPos.Y);
-    Exit;
-  end;
-  ThemePopupMenu(FIdMenu);
-  FIdMenu.PopUp(Mouse.CursorPos.X, Mouse.CursorPos.Y);
+  ShowMenu;
 end;
 
 procedure TEntryEditor.MenuOpenClick(Sender: TObject);
@@ -1067,6 +1084,11 @@ end;
 procedure TEntryEditor.MenuCopyShownClick(Sender: TObject);
 begin
   if FMenuShown <> '' then Clipboard.AsText := FMenuShown;
+end;
+
+procedure TEntryEditor.MenuCopyNameClick(Sender: TObject);
+begin
+  if FMenuAttrName <> '' then Clipboard.AsText := FMenuAttrName;
 end;
 
 procedure TEntryEditor.MenuLoadClick(Sender: TObject);
@@ -1674,13 +1696,37 @@ end;
 
 procedure TEntryEditor.RefreshGrid;
 var
-  i, j, row, keepRow: Integer;
+  i, j, k, row, keepRow: Integer;
   a: TLdapAttribute;
   s: TSchemaSnapshot;
   c: TDirectoryConnection;
   must, may: TStringList;
   classes: array of string;
   oc: TLdapAttribute;
+  shown, keys: TStringArray;
+  order: TIndexArray;
+
+  // Les valeurs d'un attribut sont un ensemble, sauf quand l'ordre est le contenu: olcAccess
+  // retrie, c'est une ACL reecrite a l'affichage.
+  function ServerOrder(AAttr: TLdapAttribute): Boolean;
+  var
+    at: TSchemaAttributeType;
+    v: string;
+  begin
+    if (AAttr.ValueCount < 2) or SameText(AAttr.BaseName, 'objectClass') or
+       FCtx.Sensitive.IsSensitive(AAttr.Description) then
+      Exit(True);
+    if (c <> nil) and (c.Schema <> nil) then
+    begin
+      at := c.Schema.AttributeType(AAttr.BaseName);
+      if (at <> nil) and (at.ExtensionValue('X-ORDERED') <> '') then Exit(True);
+    end;
+    // Sans schema, le prefixe {n} des valeurs de cn=config trahit l'ordre impose.
+    v := string(AAttr.Values[0]);
+    Result := (Length(v) > 2) and (v[1] = '{') and (v[2] in ['-', '0'..'9']) and
+      (Pos('}', v) > 2);
+  end;
+
 begin
   CommitInlineEditor;
   keepRow := FGrid.Row;
@@ -1719,12 +1765,28 @@ begin
         Inc(row);
         Continue;
       end;
+      // Affichage seul: chaque ligne garde l'indice reel de sa valeur, l'ordre envoye au
+      // serveur ne change pas.
+      shown := nil;
+      SetLength(shown, a.ValueCount);
       for j := 0 to a.ValueCount - 1 do
+        shown[j] := ValueDisplay(a.Description, a.Values[j]);
+      order := nil;
+      if not ServerOrder(a) then
       begin
-        FGrid.RowCount := row + 1;
-        if j = 0 then FGrid.Cells[0, row] := a.Description else FGrid.Cells[0, row] := '';
-        FGrid.Cells[1, row] := ValueDisplay(a.Description, a.Values[j]);
-        if j = 0 then
+        keys := nil;
+        SetLength(keys, a.ValueCount);
+        for j := 0 to a.ValueCount - 1 do
+          keys[j] := SortKey(shown[j]);
+        order := KeyOrder(keys);
+      end;
+      FGrid.RowCount := row + a.ValueCount;
+      for k := 0 to a.ValueCount - 1 do
+      begin
+        if order <> nil then j := order[k] else j := k;
+        if k = 0 then FGrid.Cells[0, row] := a.Description else FGrid.Cells[0, row] := '';
+        FGrid.Cells[1, row] := shown[j];
+        if k = 0 then
         begin
           FGrid.Cells[2, row] := AttributeSyntax(a.BaseName);
           FGrid.Cells[3, row] := AttributeInfo(a.BaseName, a);

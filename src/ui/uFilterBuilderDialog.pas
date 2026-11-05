@@ -139,6 +139,7 @@ type
     procedure UpdateStatus;
     procedure UpdateHelp;
     function AttrInfo(const AName: string): string;
+    function DnValued(const AAttr: string): Boolean;
     procedure PushUndo;
     procedure BeginTyping(AOwner: TObject);
     procedure ReplaceRoot(ANew: TFilterNode);
@@ -249,6 +250,8 @@ resourcestring
   rsFbReadOnly = 'not modifiable';
   rsFbUnknownAttr = '%s: not in the schema of this server.';
   rsFbLiteral = 'The value is taken literally: * ( ) \ are escaped.';
+  rsFbDnSubstring = 'Warning: servers cannot search inside a DN value, this condition will ' +
+    'match nothing. To find a text among group members, use Tools > Group Members.';
   rsFbFragment = 'LDAP: %s';
   rsFbOpEquals = 'equals: compared with the equality rule of the attribute (often case-insensitive).';
   rsFbOpNotEquals = 'differs from: entries without this value, including those without the attribute.';
@@ -1476,6 +1479,30 @@ begin
     Result := Format(rsFbUnknownAttr, [AName]);
 end;
 
+// DN et nameAndOptionalUID n'ont pas de regle de sous-chaine: (member=*bob*) est Undefined,
+// donc aucun resultat et aucune erreur. Le genre de silence qui fait conclure a tort.
+function TFilterBuilderDialog.DnValued(const AAttr: string): Boolean;
+const
+  KNOWN: array[0..7] of string = ('member', 'uniqueMember', 'memberOf', 'manager', 'owner',
+    'seeAlso', 'roleOccupant', 'secretary');
+var
+  base, syn: string;
+  s: TSchemaSnapshot;
+  i: Integer;
+begin
+  base := AAttr;
+  if Pos(';', base) > 0 then base := Copy(base, 1, Pos(';', base) - 1);
+  s := Schema;
+  if (s <> nil) and (s.AttributeType(base) <> nil) then
+  begin
+    syn := s.EffectiveSyntax(base);
+    Exit((syn = '1.3.6.1.4.1.1466.115.121.1.12') or (syn = '1.3.6.1.4.1.1466.115.121.1.34'));
+  end;
+  for i := 0 to High(KNOWN) do
+    if SameText(base, KNOWN[i]) then Exit(True);
+  Result := False;
+end;
+
 procedure TFilterBuilderDialog.UpdateHelp;
 var
   t: string;
@@ -1500,6 +1527,8 @@ begin
             foGreaterOrEqual, foLessOrEqual, foApprox, foExtensible]) and
             (LastDelimiter('*()\', string(c.Value)) > 0) then
             t := t + ' ' + rsFbLiteral;
+          if (c.Op in [foStartsWith, foEndsWith, foContains, foPattern]) and DnValued(c.Attr) then
+            t := t + LineEnding + rsFbDnSubstring;
           if FCurrent.Negated then t := Format(rsFbHelpNegated, [rsFbWordCondition]) + LineEnding + t;
           if FCurrent.FError = '' then
             t := t + LineEnding + Format(rsFbFragment, [FilterToString(FCurrent.Node)]);
